@@ -5,58 +5,55 @@ from django.db import transaction
 from django.utils import timezone
 from datetime import datetime
 import json
-from pymongo import MongoClient
-from bson import ObjectId
 import os
+from pymongo import MongoClient
+import certifi
 
 from ..models import Billing, Sample, Batch, EmployeeRegistration
 from ..serializers import BillingSerializer, SampleSerializer, BatchSerializer
 
 
-def convert_objectid_to_str(doc):
-    """Recursively convert ObjectId to string in a MongoDB document"""
-    if isinstance(doc, list):
-        return [convert_objectid_to_str(item) for item in doc]
-    elif isinstance(doc, dict):
-        return {k: convert_objectid_to_str(v) for k, v in doc.items()}
-    elif isinstance(doc, ObjectId):
-        return str(doc)
-    return doc
-
 @api_view(['GET'])
 def get_billing_patients(request):
-    """Get billing records for sample collection with employee details"""
+    """Get billing records for sample collection with employee details - only show patients with uncollected samples"""
     date_str = request.GET.get('date')
+    company_id = request.GET.get('company_id')
     employee_id = request.GET.get('employee_id')
     barcode = request.GET.get('barcode')
+    
+    # Made date and company_id required parameters
+    if not date_str or not company_id:
+        return Response({'error': 'date and company_id are required'}, status=400)
     
     try:
         billings = Billing.objects.all()
         
-        if date_str:
-            try:
-                filter_date = datetime.strptime(date_str, '%Y-%m-%d')
-                start_of_day = datetime.combine(filter_date, datetime.min.time())
-                end_of_day = datetime.combine(filter_date, datetime.max.time())
-                billings = billings.filter(
-                    date__gte=start_of_day,
-                    date__lte=end_of_day
-                )
-            except ValueError:
-                return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
-        
+        # Always filter by date and company_id
+        try:
+            filter_date = datetime.strptime(date_str, '%Y-%m-%d')
+            start_of_day = datetime.combine(filter_date, datetime.min.time())
+            end_of_day = datetime.combine(filter_date, datetime.max.time())
+            billings = billings.filter(
+                date__gte=start_of_day,
+                date__lte=end_of_day,
+                # FIXED: Changed from company_id to company_id to match database field
+                company_id=company_id
+            )
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+            
         if employee_id:
             billings = billings.filter(employee_id__icontains=employee_id)
             
         if barcode:
             billings = billings.filter(barcode__icontains=barcode)
         
-        # Filter only billings that have testdetails with test_id
+        # Filter only billings that have testdetails with test_id AND are not fully collected/transferred
         billing_data = []
         for billing in billings:
             # Parse test details to check for test_id and get count
             test_count = 0
-            has_test_id = False
+            has_uncollected_tests = False
             
             if billing.testdetails:
                 try:
@@ -66,42 +63,66 @@ def get_billing_patients(request):
                         tests = billing.testdetails
                     
                     if isinstance(tests, list):
-                        # Filter tests that have test_id
-                        valid_tests = [test for test in tests if isinstance(test, dict) and test.get('test_id')]
+                        # Filter tests that have test_id and test_id is not null
+                        valid_tests = [test for test in tests if isinstance(test, dict) and test.get('test_id') is not None]
                         test_count = len(valid_tests)
-                        has_test_id = test_count > 0
-                    elif isinstance(tests, dict) and tests.get('test_id'):
-                        test_count = 1
-                        has_test_id = True
-                except:
-                    test_count = 0
-                    has_test_id = False
-            
-            # Only include billings with test_id AND check if all tests are not collected
-            if has_test_id:
-                # Check if sample already exists and if all tests are collected
-                try:
-                    existing_sample = Sample.objects.filter(barcode=billing.barcode).first()
-                    if existing_sample and existing_sample.testdetails:
-                        # Parse existing testdetails
-                        try:
-                            if isinstance(existing_sample.testdetails, str):
-                                existing_tests = json.loads(existing_sample.testdetails)
-                            else:
-                                existing_tests = existing_sample.testdetails or []
-                        except:
-                            existing_tests = []
                         
-                        # Check if ALL tests are collected
-                        valid_existing_tests = [test for test in existing_tests if isinstance(test, dict) and test.get('test_id')]
-                        if valid_existing_tests and all(test.get('samplestatus') == 'Collected' for test in valid_existing_tests):
-                            # All tests are collected, skip this patient
-                            continue
-                except:
-                    pass  # If there's an error, include the patient
-                
+                        # Check if there are any uncollected tests by looking at existing samples
+                        if test_count > 0:
+                            # Check if sample exists and has collected/transferred tests
+                            try:
+                                existing_sample = Sample.objects.filter(
+                                    barcode=billing.barcode,
+                                    company_id=company_id,
+                                    created_date__gte=start_of_day,
+                                    created_date__lte=end_of_day
+                                ).first()
+                                
+                                if existing_sample and existing_sample.testdetails:
+                                    if isinstance(existing_sample.testdetails, str):
+                                        sample_tests = json.loads(existing_sample.testdetails)
+                                    else:
+                                        sample_tests = existing_sample.testdetails or []
+                                    
+                                    # Create a map of collected/transferred test IDs
+                                    processed_test_ids = set()
+                                    for sample_test in sample_tests:
+                                        if (isinstance(sample_test, dict) and 
+                                            sample_test.get('test_id') and 
+                                            sample_test.get('samplestatus') in ['Collected', 'Transferred']):
+                                            processed_test_ids.add(sample_test['test_id'])
+                                    
+                                    # Check if there are any uncollected tests
+                                    for test in valid_tests:
+                                        if test['test_id'] not in processed_test_ids:
+                                            has_uncollected_tests = True
+                                            break
+                                else:
+                                    # No sample exists, so all tests are uncollected
+                                    has_uncollected_tests = True
+                                    
+                            except Exception as e:
+                                print(f"Error checking sample status: {e}")
+                                # If error checking samples, assume uncollected
+                                has_uncollected_tests = True
+                                
+                    elif isinstance(tests, dict) and tests.get('test_id') is not None:
+                        test_count = 1
+                        has_uncollected_tests = True  # Single test, assume uncollected for now
+                        
+                except Exception as e:
+                    print(f"Error parsing test details: {e}")
+                    test_count = 0
+                    has_uncollected_tests = False
+            
+            # Only include billings with uncollected tests
+            if has_uncollected_tests:
                 billing_dict = BillingSerializer(billing).data
                 billing_dict['test_count'] = test_count
+                
+                # FIXED: Map company_id to company_id for frontend compatibility
+                if hasattr(billing, 'company_id'):
+                    billing_dict['company_id'] = billing.company_id
                 
                 # Get employee details
                 try:
@@ -126,102 +147,70 @@ def get_billing_patients(request):
         })
         
     except Exception as e:
+        print(f"Error in get_billing_patients: {e}")
         return Response({'error': str(e)}, status=500)
-
+    
+    
 @api_view(['GET', 'POST', 'PATCH'])
 def sample_management(request):
     """Handle sample collection, transfer, and status updates"""
-    
+
     if request.method == 'GET':
-        # Get samples for display with employee details
-        employee_id = request.GET.get('employee_id')
+        company_id = request.GET.get('company_id')
         barcode = request.GET.get('barcode')
         date_str = request.GET.get('date')
-        sample_status = request.GET.get('status', 'Pending')
+        sample_status = request.GET.get('samplestatus', 'Collected')
 
         try:
-            # Start with all samples
-            samples = Sample.objects.all()
-            
-            # Filter by barcode if provided
+            # MongoDB connection
+            client = MongoClient(os.getenv('GLOBAL_DB_HOST'))
+            db = client.Corporatehealthcheckup
+            collection = db.core_sample
+
+            # Build MongoDB filter
+            mongo_filter = {}
+
             if barcode:
-                samples = samples.filter(barcode=barcode)
-            
-            # Fixed date filtering logic
+                mongo_filter['barcode'] = barcode
+            if company_id:
+                mongo_filter['company_id'] = company_id
             if date_str:
                 try:
                     filter_date = datetime.strptime(date_str, '%Y-%m-%d')
-                    # Use date range filtering instead of __date lookup
-                    start_of_day = datetime.combine(filter_date.date(), datetime.min.time())
-                    end_of_day = datetime.combine(filter_date.date(), datetime.max.time())
-                    
-                    # Make timezone aware if USE_TZ = True
-                    if timezone.is_aware(timezone.now()):
-                        start_of_day = timezone.make_aware(start_of_day)
-                        end_of_day = timezone.make_aware(end_of_day)
-                    
-                    samples = samples.filter(
-                        created_date__gte=start_of_day,
-                        created_date__lte=end_of_day
-                    )
+                    start_of_day = datetime.combine(filter_date, datetime.min.time())
+                    end_of_day = datetime.combine(filter_date, datetime.max.time())
+                    mongo_filter['created_date'] = {"$gte": start_of_day, "$lte": end_of_day}
                 except ValueError:
                     return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
 
-            # Filter samples and get employee details
+            # Fetch documents from MongoDB
+            samples = list(collection.find(mongo_filter))
+
             sample_data = []
             for sample in samples:
-                if sample.testdetails:
-                    # Parse testdetails
-                    try:
-                        if isinstance(sample.testdetails, str):
-                            tests = json.loads(sample.testdetails)
-                        else:
-                            tests = sample.testdetails or []
-                    except:
-                        tests = []
+                try:
+                    # Parse testdetails (stored as string in MongoDB)
+                    tests = json.loads(sample.get('testdetails', '[]')) if isinstance(sample.get('testdetails'), str) else sample.get('testdetails', [])
+                except:
+                    tests = []
 
-                    # Filter tests by status and check for test_id
-                    valid_tests = []
-                    for test in tests:
-                        if isinstance(test, dict) and test.get('test_id'):
-                            test_status = test.get('samplestatus', 'Pending')
-                            if test_status == sample_status:
-                                valid_tests.append(test)
+                # Filter tests by samplestatus
+                valid_tests = [t for t in tests if t.get('samplestatus') == sample_status]
 
-                    # Only include samples that have tests with the requested status
-                    if valid_tests:
-                        # Get billing info to get employee_id
-                        try:
-                            billing = Billing.objects.get(barcode=sample.barcode)
-                            sample_employee_id = billing.employee_id
-                            
-                            # Filter by employee_id if provided
-                            if employee_id and employee_id.lower() not in sample_employee_id.lower():
-                                continue
-                                
-                            sample_dict = SampleSerializer(sample).data
-                            sample_dict['employee_id'] = sample_employee_id
-                            
-                            # Get employee details
-                            try:
-                                employee = EmployeeRegistration.objects.get(employee_id=sample_employee_id)
-                                sample_dict['employee_name'] = employee.employee_name
-                                sample_dict['age'] = employee.age
-                                sample_dict['gender'] = employee.gender
-                                sample_dict['company_name'] = employee.company_name
-                                sample_dict['department'] = employee.department
-                            except EmployeeRegistration.DoesNotExist:
-                                sample_dict['employee_name'] = 'Unknown'
-                                sample_dict['age'] = None
-                                sample_dict['gender'] = 'Unknown'
-                                sample_dict['company_name'] = 'Unknown'
-                                sample_dict['department'] = 'Unknown'
-                            
-                            sample_data.append(sample_dict)
-                            
-                        except Billing.DoesNotExist:
-                            continue
-            
+                if not valid_tests:
+                    continue
+
+                # Construct response object
+                sample_dict = {
+                    "_id": str(sample.get('_id')),
+                    "barcode": sample.get('barcode'),
+                    "company_id": sample.get('company_id'),
+                    "created_date": sample.get('created_date'),
+                    "testdetails": valid_tests
+                }
+
+                sample_data.append(sample_dict)
+
             return Response({
                 'results': sample_data,
                 'count': len(sample_data)
@@ -231,14 +220,15 @@ def sample_management(request):
             return Response({'error': str(e)}, status=500)
 
     elif request.method == 'POST':
-        # Create or update sample collection data
-        employee_id = request.data.get('employee_id')
+        # <CHANGE> Create or update sample collection with required date, company_id, barcode
+        date_str = request.data.get('date')
+        company_id = request.data.get('company_id')
         barcode = request.data.get('barcode')
         incoming_testdetails = request.data.get('testdetails', [])
         collected_by = request.data.get('collected_by', 'system')
 
-        if not employee_id or not barcode:
-            return Response({"error": "employee_id and barcode are required"}, status=400)
+        if not date_str or not company_id or not barcode:
+            return Response({"error": "date, company_id and barcode are required"}, status=400)
 
         if not isinstance(incoming_testdetails, list):
             return Response({"error": "testdetails must be a list of objects"}, status=400)
@@ -254,15 +244,36 @@ def sample_management(request):
 
         try:
             with transaction.atomic():
-                # Get the billing record to ensure it exists
-                billing = Billing.objects.get(barcode=barcode, employee_id=employee_id)
+                # Parse date for filtering
+                filter_date = datetime.strptime(date_str, '%Y-%m-%d')
+                start_of_day = datetime.combine(filter_date, datetime.min.time())
+                end_of_day = datetime.combine(filter_date, datetime.max.time())
+                
+                if timezone.is_aware(timezone.now()):
+                    start_of_day = timezone.make_aware(start_of_day)
+                    end_of_day = timezone.make_aware(end_of_day)
+
+                # <CHANGE> Get billing record with date, company_id, and barcode
+                billing = Billing.objects.filter(
+                    barcode=barcode,
+                    company_id=company_id,
+                    date__gte=start_of_day,
+                    date__lte=end_of_day
+                ).first()
+                
+                if not billing:
+                    return Response({"error": "Billing record not found for the given date, company_id and barcode"}, status=404)
 
                 # Check if sample already exists
-                existing_sample = Sample.objects.filter(barcode=barcode).first()
+                existing_sample = Sample.objects.filter(
+                    barcode=barcode,
+                    company_id=company_id,
+                    created_date__gte=start_of_day,
+                    created_date__lte=end_of_day
+                ).first()
                 
                 if existing_sample:
                     # Update existing sample with new test statuses
-                    # Parse existing testdetails
                     try:
                         if isinstance(existing_sample.testdetails, str):
                             existing_tests = json.loads(existing_sample.testdetails)
@@ -291,21 +302,17 @@ def sample_management(request):
                             test_index = existing_tests_map[test_id]
                             existing_test = existing_tests[test_index]
                             
-                            # Always update the status
                             existing_test['samplestatus'] = new_status
                             existing_test['lastmodified_by'] = collected_by
                             existing_test['lastmodified_time'] = current_time
                             
-                            # Update collection-specific fields based on status
                             if new_status == 'Collected':
                                 existing_test['collected_by'] = collected_by
                                 existing_test['samplecollected_time'] = current_time
-                                # Keep specimen_type if already exists, otherwise use new one
                                 if 'specimen_type' not in existing_test or not existing_test['specimen_type']:
                                     existing_test['specimen_type'] = new_test.get('specimen_type', 'Standard')
-                            
                         else:
-                            # Add new test if not exists
+                            # Add new test
                             new_test_data = {
                                 'testname': new_test.get('testname', ''),
                                 'test_id': test_id,
@@ -324,7 +331,6 @@ def sample_management(request):
                             }
                             existing_tests.append(new_test_data)
                     
-                    # Update the sample
                     existing_sample.testdetails = existing_tests
                     existing_sample.lastmodified_by = collected_by
                     existing_sample.lastmodified_date = timezone.now()
@@ -333,7 +339,7 @@ def sample_management(request):
                     sample = existing_sample
                     created = False
                 else:
-                    # Create new sample (first time collection)
+                    # Create new sample
                     current_time = timezone.now().isoformat()
                     formatted_testdetails = []
                     
@@ -359,7 +365,7 @@ def sample_management(request):
 
                     sample = Sample.objects.create(
                         barcode=barcode,
-                        company_id=billing.company_id,
+                        company_id=company_id,
                         testdetails=formatted_testdetails,
                         created_by=collected_by
                     )
@@ -371,52 +377,72 @@ def sample_management(request):
                     "data": serializer.data
                 }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
-        except Billing.DoesNotExist:
-            return Response({"error": "Billing record not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 
     elif request.method == 'PATCH':
-        employee_id = request.data.get('employee_id')
-        barcode = request.data.get('barcode')
+        # Update sample transfer with required date, company_id, barcode
+        date_str = request.data.get('date')
         company_id = request.data.get('company_id')
+        barcode = request.data.get('barcode')
         incoming_testdetails = request.data.get('testdetails', [])
         transferred_by = request.data.get('transferred_by', 'system')
 
-        if not employee_id or not barcode or not company_id:
-            return Response({"error": "employee_id, barcode, and company_id are required"}, status=400)
+        if not date_str or not company_id or not barcode:
+            return Response({"error": "date, company_id and barcode are required"}, status=400)
 
         # Filter valid tests
-        valid_testdetails = [test for test in incoming_testdetails if isinstance(test, dict) and test.get('test_id')]
+        valid_testdetails = [
+            test for test in incoming_testdetails
+            if isinstance(test, dict) and test.get('test_id')
+        ]
         if not valid_testdetails:
             return Response({"error": "No valid tests with test_id found"}, status=400)
 
         try:
             with transaction.atomic():
-                # Get existing sample from Django ORM (not MongoDB)
-                existing_sample = Sample.objects.filter(barcode=barcode, company_id=company_id).first()
-                if not existing_sample:
-                    return Response({"error": "Sample not found"}, status=404)
+                # Parse date for filtering
+                filter_date = datetime.strptime(date_str, '%Y-%m-%d')
+                start_of_day = datetime.combine(filter_date, datetime.min.time())
+                end_of_day = datetime.combine(filter_date, datetime.max.time())
+                
+                if timezone.is_aware(timezone.now()):
+                    start_of_day = timezone.make_aware(start_of_day)
+                    end_of_day = timezone.make_aware(end_of_day)
 
-                # Parse existing testdetails
+                # Get existing sample with date, company_id, and barcode
+                existing_sample = Sample.objects.filter(
+                    barcode=barcode,
+                    company_id=company_id,
+                    created_date__gte=start_of_day,
+                    created_date__lte=end_of_day
+                ).first()
+                
+                if not existing_sample:
+                    return Response(
+                        {"error": "Sample not found for the given date, company_id and barcode"},
+                        status=404
+                    )
+
+                # Parse existing testdetails safely
                 try:
                     if isinstance(existing_sample.testdetails, str):
                         existing_tests = json.loads(existing_sample.testdetails)
                     else:
                         existing_tests = existing_sample.testdetails or []
-                    
                     if not isinstance(existing_tests, list):
                         existing_tests = []
                 except:
                     existing_tests = []
 
-                # Create a mapping of existing tests by test_id
-                existing_tests_map = {}
-                for i, test in enumerate(existing_tests):
-                    if isinstance(test, dict) and test.get('test_id'):
-                        existing_tests_map[test['test_id']] = i
+                # Map existing tests by test_id
+                existing_tests_map = {
+                    test['test_id']: i
+                    for i, test in enumerate(existing_tests)
+                    if isinstance(test, dict) and test.get('test_id')
+                }
 
-                # Update existing tests or add new ones
+                # Update matching tests
                 current_time = timezone.now().isoformat()
                 updated_count = 0
                 
@@ -425,52 +451,28 @@ def sample_management(request):
                     new_status = new_test.get('samplestatus', 'Transferred')
                     
                     if test_id in existing_tests_map:
-                        # Update existing test
-                        test_index = existing_tests_map[test_id]
-                        existing_test = existing_tests[test_index]
-                        
-                        # Always update the status
+                        idx = existing_tests_map[test_id]
+                        existing_test = existing_tests[idx]
+
                         existing_test['samplestatus'] = new_status
                         existing_test['lastmodified_by'] = transferred_by
                         existing_test['lastmodified_time'] = current_time
-                        
-                        # Update transfer-specific fields based on status
+
                         if new_status == 'Transferred':
                             existing_test['transferred_by'] = transferred_by
                             existing_test['sampletransferred_time'] = current_time
-                        
-                        updated_count += 1
-                    else:
-                        # This shouldn't happen in normal flow, but handle it
-                        new_test_data = {
-                            'testname': new_test.get('testname', ''),
-                            'test_id': test_id,
-                            'samplestatus': new_status,
-                            'samplecollected_time': new_test.get('samplecollected_time'),
-                            'collected_by': new_test.get('collected_by'),
-                            'batch_number': None,
-                            'sampletransferred_time': current_time if new_status == 'Transferred' else None,
-                            'transferred_by': transferred_by if new_status == 'Transferred' else None,
-                            'received_time': None,
-                            'received_by': None,
-                            'remarks': None,
-                            'specimen_type': new_test.get('specimen_type', 'Standard'),
-                            'lastmodified_by': transferred_by,
-                            'lastmodified_time': current_time
-                        }
-                        existing_tests.append(new_test_data)
+
                         updated_count += 1
 
                 if updated_count == 0:
                     return Response({"error": "No matching tests found to update"}, status=404)
 
-                # Update the sample in Django ORM
-                existing_sample.testdetails = existing_tests
+                # Save updated testdetails
+                existing_sample.testdetails = json.dumps(existing_tests)
                 existing_sample.lastmodified_by = transferred_by
                 existing_sample.lastmodified_date = timezone.now()
                 existing_sample.save()
 
-                # Return updated sample using serializer
                 serializer = SampleSerializer(existing_sample)
                 return Response({
                     "message": f"Sample transferred successfully. Updated {updated_count} test(s).",
@@ -479,8 +481,7 @@ def sample_management(request):
                 }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            print(f"Error in PATCH operation: {str(e)}")
-            return Response({"error": f"Database error: {str(e)}"}, status=500)
+            return Response({"error": str(e)}, status=500)
 
 
 from datetime import datetime, timedelta
