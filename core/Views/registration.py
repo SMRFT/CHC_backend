@@ -194,7 +194,7 @@ def register_employee_with_billing(request):
             "barcode": data.get("barcode"),
             "testdetails": data.get("testdetails", []),  # pass list/dict directly
             "netAmount": data.get("totalAmount", 0),
-            "paymentMode": data.get("paymentMode", "Cash")  # or default
+            "paymentMode": data.get("paymentMode", "Credit")  # or default
         }
 
 
