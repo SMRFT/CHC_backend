@@ -159,29 +159,32 @@ def sample_management(request):
         company_id = request.GET.get('company_id')
         barcode = request.GET.get('barcode')
         date_str = request.GET.get('date')
-        sample_status = request.GET.get('samplestatus', 'Collected')
+        employee_id = request.GET.get('employee_id')
+        sample_status = request.GET.get('samplestatus', 'Transferred')
+
+        # Validate required parameters
+        if not date_str or not company_id:
+            return Response({'error': 'date and company_id are required'}, status=400)
 
         try:
+            # Parse date for filtering
+            filter_date = datetime.strptime(date_str, '%Y-%m-%d')
+            start_of_day = datetime.combine(filter_date, datetime.min.time())
+            end_of_day = datetime.combine(filter_date, datetime.max.time())
+
             # MongoDB connection
             client = MongoClient(os.getenv('GLOBAL_DB_HOST'))
             db = client.Corporatehealthcheckup
             collection = db.core_sample
 
             # Build MongoDB filter
-            mongo_filter = {}
+            mongo_filter = {'company_id': company_id}
+            mongo_filter['created_date'] = {"$gte": start_of_day, "$lte": end_of_day}
 
             if barcode:
                 mongo_filter['barcode'] = barcode
-            if company_id:
-                mongo_filter['company_id'] = company_id
-            if date_str:
-                try:
-                    filter_date = datetime.strptime(date_str, '%Y-%m-%d')
-                    start_of_day = datetime.combine(filter_date, datetime.min.time())
-                    end_of_day = datetime.combine(filter_date, datetime.max.time())
-                    mongo_filter['created_date'] = {"$gte": start_of_day, "$lte": end_of_day}
-                except ValueError:
-                    return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+            if employee_id:
+                mongo_filter['employee_id'] = employee_id
 
             # Fetch documents from MongoDB
             samples = list(collection.find(mongo_filter))
@@ -189,27 +192,81 @@ def sample_management(request):
             sample_data = []
             for sample in samples:
                 try:
-                    # Parse testdetails (stored as string in MongoDB)
-                    tests = json.loads(sample.get('testdetails', '[]')) if isinstance(sample.get('testdetails'), str) else sample.get('testdetails', [])
-                except:
-                    tests = []
+                    # Parse testdetails (stored as string in MongoDB sometimes)
+                    testdetails_raw = sample.get('testdetails', '[]')
+                    if isinstance(testdetails_raw, str):
+                        tests = json.loads(testdetails_raw)
+                    else:
+                        tests = testdetails_raw if isinstance(testdetails_raw, list) else []
 
-                # Filter tests by samplestatus
-                valid_tests = [t for t in tests if t.get('samplestatus') == sample_status]
+                    # Filter tests by samplestatus
+                    valid_tests = [
+                        t for t in tests if isinstance(t, dict) and t.get('samplestatus') == sample_status
+                    ]
+                    if not valid_tests:
+                        continue
 
-                if not valid_tests:
+                    # Default employee info
+                    employee_info = {
+                        'employee_id': None,
+                        'employee_name': 'Unknown',
+                        'age': None,
+                        'gender': 'Unknown',
+                        'company_name': 'Unknown',
+                        'department': 'Unknown'
+                    }
+
+                    # Get employee_id from sample
+                    sample_employee_id = sample.get('employee_id')
+                    sample_barcode = sample.get('barcode')
+
+                    # If missing employee_id, get from Billing using barcode
+                    if not sample_employee_id and sample_barcode:
+                        billing = Billing.objects.filter(
+                            barcode=sample_barcode,
+                            company_id=company_id
+                        ).order_by('-date').first()
+                        if billing:
+                            sample_employee_id = billing.employee_id
+
+                    # Now fetch employee details from EmployeeRegistration
+                    if sample_employee_id:
+                        try:
+                            employee = EmployeeRegistration.objects.get(employee_id=sample_employee_id)
+                            employee_info = {
+                                'employee_id': employee.employee_id,
+                                'employee_name': employee.employee_name or 'Unknown',
+                                'age': employee.age,
+                                'gender': employee.gender or 'Unknown',
+                                'company_name': employee.company_name or 'Unknown',
+                                'department': employee.department or 'Unknown'
+                            }
+                        except EmployeeRegistration.DoesNotExist:
+                            employee_info['employee_id'] = sample_employee_id
+
+                    # Build final sample dict
+                    sample_dict = {
+                        "_id": str(sample.get('_id')),
+                        "barcode": sample.get('barcode'),
+                        "company_id": sample.get('company_id'),
+                        "employee_id": employee_info['employee_id'],
+                        "created_date": sample.get('created_date'),
+                        "collected_date": sample.get('created_date'),
+                        "collected_by": sample.get('collected_by', 'System'),
+                        "testdetails": valid_tests,
+                        # Employee information
+                        "employee_name": employee_info['employee_name'],
+                        "age": employee_info['age'],
+                        "gender": employee_info['gender'],
+                        "company_name": employee_info['company_name'],
+                        "department": employee_info['department']
+                    }
+
+                    sample_data.append(sample_dict)
+
+                except Exception as e:
+                    print(f"Error processing sample {sample.get('_id')}: {e}")
                     continue
-
-                # Construct response object
-                sample_dict = {
-                    "_id": str(sample.get('_id')),
-                    "barcode": sample.get('barcode'),
-                    "company_id": sample.get('company_id'),
-                    "created_date": sample.get('created_date'),
-                    "testdetails": valid_tests
-                }
-
-                sample_data.append(sample_dict)
 
             return Response({
                 'results': sample_data,
@@ -217,7 +274,13 @@ def sample_management(request):
             })
 
         except Exception as e:
+            print(f"Error in sample_management GET: {e}")
             return Response({'error': str(e)}, status=500)
+        finally:
+            try:
+                client.close()
+            except:
+                pass
 
     elif request.method == 'POST':
         # <CHANGE> Create or update sample collection with required date, company_id, barcode
@@ -559,122 +622,128 @@ def get_transferred_samples(request):
         return Response({'error': str(e)}, status=500)
 
 
-@api_view(['POST', 'GET'])
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from django.utils import timezone
+from pymongo import MongoClient
+from django.conf import settings
+import json
+from ..models import Sample, Batch
+
+# MongoDB connection
+client = MongoClient(os.getenv('GLOBAL_DB_HOST'))
+mongo_db = client["Corporatehealthcheckup"]
+testdetails_collection = mongo_db["core_testdetails"]
+
+
+@api_view(['GET', 'POST'])
 def batch_management(request):
-    """Handle batch creation and retrieval"""
-    
+    """
+    GET: List all batches
+    POST: Create a new batch with correct specimen counts
+    """
+
     if request.method == 'GET':
-        try:
-            batches = Batch.objects.all().order_by('-created_date')
-            serializer = BatchSerializer(batches, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        batches = Batch.objects.all().order_by('-created_date')
+        return Response([
+            {
+                "id": str(batch.id),
+                "batch_number": batch.batch_number,
+                "date": batch.date.strftime("%Y-%m-%d"),
+                "created_by": batch.created_by,
+                "created_date": batch.created_date.strftime("%Y-%m-%d %H:%M:%S"),
+                "received": batch.received,
+                "remarks": batch.remarks,
+                "specimen_count": batch.specimen_count or [],
+                "batch_details": batch.samples or []
+            }
+            for batch in batches
+        ], status=status.HTTP_200_OK)
 
     elif request.method == 'POST':
         try:
-            with transaction.atomic():
-                # Generate next batch number
-                last_batch = Batch.objects.order_by('-created_date').first()
-                if last_batch and last_batch.batch_number:
+            data = request.data
+            batch_details = data.get("batch_details", [])
+            batch_number = data.get("batch_number") or None
+            created_by = data.get("created_by", "system")
+
+            if not batch_details:
+                return Response(
+                    {"error": "Batch details (barcodes) are required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            barcodes = [item["barcode"] for item in batch_details]
+
+            # Calculate specimen counts
+            specimen_counts = {}
+            samples = Sample.objects.filter(barcode__in=barcodes)
+
+            for sample in samples:
+                tests = []
+                if sample.testdetails:
                     try:
-                        next_number = str(int(last_batch.batch_number) + 1).zfill(5)
-                    except ValueError:
-                        next_number = "00001"
-                else:
-                    next_number = "00001"
+                        if isinstance(sample.testdetails, str):
+                            tests = json.loads(sample.testdetails)
+                        else:
+                            tests = sample.testdetails
+                    except Exception:
+                        continue
 
-                data = dict(request.data)
-                data['batch_number'] = next_number
+                for test in tests:
+                    if (
+                        isinstance(test, dict)
+                        and test.get('test_id')
+                        and test.get('samplestatus') == 'Transferred'
+                    ):
+                        shortcut = test.get("shortcut")
+                        test_name = test.get("test_name")
 
-                # Parse and deduplicate batch_details
-                raw_batch_details = request.data.get("batch_details", [])
-                if isinstance(raw_batch_details, str):
-                    try:
-                        raw_batch_details = json.loads(raw_batch_details)
-                    except json.JSONDecodeError:
-                        return Response({"error": "Invalid JSON in batch_details"}, status=400)
+                        # Lookup core_testdetails
+                        query = {}
+                        if shortcut:
+                            query = {"shortcut": shortcut.upper()}
+                        elif test_name:
+                            query = {"test_name": test_name.upper()}
 
-                if not isinstance(raw_batch_details, list):
-                    return Response({"error": "batch_details must be a list"}, status=400)
+                        specimen_type = "Unknown"
+                        core_test = testdetails_collection.find_one(query)
+                        if core_test and "specimen_type" in core_test:
+                            specimen_type = core_test["specimen_type"]
 
-                # Deduplicate barcodes
-                seen_barcodes = set()
-                unique_batch_list = []
-                for item in raw_batch_details:
-                    if isinstance(item, dict):
-                        barcode = item.get("barcode")
-                        if barcode and barcode not in seen_barcodes:
-                            seen_barcodes.add(barcode)
-                            unique_batch_list.append({"barcode": barcode})
+                        specimen_counts[specimen_type] = (
+                            specimen_counts.get(specimen_type, 0) + 1
+                        )
 
-                data["batch_details"] = unique_batch_list
+            specimen_count_list = [
+                {"specimen_type": stype, "count": count}
+                for stype, count in specimen_counts.items()
+            ]
 
-                # Calculate specimen counts from samples with transferred tests
-                specimen_counts = {}
-                batch_barcodes = [item["barcode"] for item in unique_batch_list]
-                samples = Sample.objects.filter(barcode__in=batch_barcodes)
-                
-                for sample in samples:
-                    if sample.testdetails:
-                        try:
-                            if isinstance(sample.testdetails, str):
-                                tests = json.loads(sample.testdetails)
-                            else:
-                                tests = sample.testdetails or []
-                        except:
-                            continue
-                            
-                        for test in tests:
-                            if (isinstance(test, dict) and 
-                                test.get('test_id') and 
-                                test.get('samplestatus') == 'Transferred'):
-                                specimen_type = test.get('specimen_type', 'Standard')
-                                specimen_counts[specimen_type] = specimen_counts.get(specimen_type, 0) + 1
+            # Save batch
+            batch_obj, created = Batch.objects.update_or_create(
+                batch_number=batch_number,
+                defaults={
+                    "date": timezone.now().date(),
+                    "created_by": created_by,
+                    "created_date": timezone.now(),
+                    "specimen_count": specimen_count_list,
+                    "samples": batch_details,
+                }
+            )
 
-                data["specimen_count"] = [
-                    {"specimen_type": specimen_type, "count": count}
-                    for specimen_type, count in specimen_counts.items()
-                ]
-
-                # Set shipment details
-                data["shipment_from"] = "Laboratory Collection Center"
-                data["shipment_to"] = "Shanmuga Reference Lab"
-
-                # Create batch
-                serializer = BatchSerializer(data=data)
-                if serializer.is_valid():
-                    batch_instance = serializer.save()
-                    
-                    # Update batch_number for transferred tests
-                    for sample in samples:
-                        if sample.testdetails:
-                            try:
-                                if isinstance(sample.testdetails, str):
-                                    tests = json.loads(sample.testdetails)
-                                else:
-                                    tests = sample.testdetails or []
-                            except:
-                                continue
-                                
-                            updated = False
-                            for test in tests:
-                                if (isinstance(test, dict) and 
-                                    test.get('test_id') and 
-                                    test.get('samplestatus') == 'Transferred' and
-                                    not test.get('batch_number')):
-                                    test['batch_number'] = next_number
-                                    updated = True
-                            
-                            if updated:
-                                sample.testdetails = tests
-                                sample.save()
-
-                    return Response(serializer.data, status=status.HTTP_201_CREATED)
-                else:
-                    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "message": "Batch created/updated successfully",
+                    "batch_number": batch_obj.batch_number,
+                    "specimen_count": batch_obj.specimen_count,
+                    "batch_details": batch_obj.samples,
+                },
+                status=status.HTTP_200_OK
+            )
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
