@@ -10,6 +10,7 @@ urlpatterns = [
     path("create_package/", package.create_package, name="create_package"),
     path("api/validate-barcode/<str:barcode>/", registration.validate_barcode, name="validate-barcode"),
     path('get_all_employees/',registration.get_all_employees, name="get_all_billings"),
+    path('get_all_registered_employees/',registration.get_all_registered_employees, name="get_all_registered_employees"),
 
 
     # Sample URLs
