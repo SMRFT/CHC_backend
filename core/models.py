@@ -22,13 +22,10 @@ class Package(AuditModel):
 
 class EmployeeRegistration(AuditModel):
     company_id = models.CharField(max_length=20, default='CHC001')
-    barcode = models.CharField(max_length=20, unique=True)
     employee_name = models.CharField(max_length=100)
     employee_id = models.CharField(max_length=20)
     gender = models.CharField(max_length=10)
-    dob = models.DateField()
     age = models.IntegerField()
-    company_name = models.CharField(max_length=100)
     department = models.CharField(max_length=200, blank=True, null=True)
     email = models.EmailField(max_length=200, blank=True, null=True)
     mobile = models.CharField(max_length=200, blank=True, null=True)
@@ -78,6 +75,8 @@ class Investigation(AuditModel):
     notes = models.CharField(max_length=1200,blank=True, null=True)
     gender = models.CharField(max_length=10)
     age = models.IntegerField()
+    barcode = models.CharField(max_length=50)
+    date = models.DateTimeField(auto_now_add=True)
     # Files (all single file paths)
     xray_file = models.CharField(max_length=200, blank=True, null=True)
     scan_file = models.CharField(max_length=200, blank=True, null=True)
