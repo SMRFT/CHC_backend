@@ -16,10 +16,10 @@ class PackageSerializer(serializers.ModelSerializer):
         model = Package
         fields = '__all__'
 
-from rest_framework import serializers
+
 from .models import EmployeeRegistration
 class EmployeeRegistrationSerializer(serializers.ModelSerializer):
-    id = ObjectIdField(source="_id", read_only=True)
+    id = ObjectIdField(read_only=True)
 
     class Meta:
         model = EmployeeRegistration
@@ -53,22 +53,7 @@ class BatchSerializer(serializers.ModelSerializer):
 from .models import Investigation
 class InvestigationSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
+    
     class Meta:
         model = Investigation
         fields = "__all__"
-
-    def validate_vitals(self, value):
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except Exception as e:
-                raise serializers.ValidationError(f"Invalid JSON for vitals: {e}")
-        return value
-
-    def validate_ophthalmology(self, value):
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except Exception as e:
-                raise serializers.ValidationError(f"Invalid JSON for ophthalmology: {e}")
-        return value
