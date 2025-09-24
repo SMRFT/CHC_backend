@@ -151,12 +151,7 @@ from ..models import EmployeeRegistration, Billing
 from ..serializers import EmployeeRegistrationSerializer, BillingSerializer
 from rest_framework.exceptions import ValidationError
 import json
-from ..serializers import EmployeeRegistrationSerializer, BillingSerializer
-from rest_framework.exceptions import ValidationError
-import json
-from ..serializers import EmployeeRegistrationSerializer, BillingSerializer
-from rest_framework.exceptions import ValidationError
-import json
+
 @api_view(['POST'])
 def register_employee_with_billing(request):
     """
@@ -167,11 +162,9 @@ def register_employee_with_billing(request):
 
         # --- EmployeeRegistration ---
         employee_payload = {
-            "barcode": data.get("barcode"),
             "employee_name": data.get("employee_name") ,
             "employee_id": data.get("employee_id"),
             "gender": data.get("gender"),
-            "dob": data.get("dob"),
             "age": data.get("age"),
             "company_name": data.get("company_name"),
             "department": data.get("department") or None,  # convert blank to None
@@ -282,12 +275,68 @@ def save_investigation(request):
     audiometric_file = request.FILES.get('audiometric_file')
 
     # MongoDB connection
-
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     fs = gridfs.GridFS(db)
 
     try:
+        # Convert and validate JSON fields BEFORE serializer validation
+        # Handle QueryDict - get first value from list for each field
+        vitals = data.get('vitals')
+        ophthalmology = data.get('ophthalmology')
+        
+        # Extract string from QueryDict list if needed
+        if isinstance(vitals, list) and len(vitals) > 0:
+            vitals = vitals[0]
+        if isinstance(ophthalmology, list) and len(ophthalmology) > 0:
+            ophthalmology = ophthalmology[0]
+        
+        # Handle vitals JSON
+        if vitals:
+            if isinstance(vitals, str):
+                try:
+                    parsed_vitals = json.loads(vitals)
+                    # Validate vitals structure
+                    if not isinstance(parsed_vitals, dict):
+                        return Response({
+                            'vitals': ['Vitals must be a valid JSON object']
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    data['vitals'] = parsed_vitals
+                except json.JSONDecodeError as e:
+                    return Response({
+                        'vitals': [f'Invalid JSON format: {str(e)}']
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            elif not isinstance(vitals, dict):
+                return Response({
+                    'vitals': ['Vitals must be a valid JSON object']
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Set default empty vitals if none provided
+            data['vitals'] = {}
+
+        # Handle ophthalmology JSON
+        if ophthalmology:
+            if isinstance(ophthalmology, str):
+                try:
+                    parsed_ophthalmology = json.loads(ophthalmology)
+                    # Validate ophthalmology structure
+                    if not isinstance(parsed_ophthalmology, dict):
+                        return Response({
+                            'ophthalmology': ['Ophthalmology must be a valid JSON object']
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    data['ophthalmology'] = parsed_ophthalmology
+                except json.JSONDecodeError as e:
+                    return Response({
+                        'ophthalmology': [f'Invalid JSON format: {str(e)}']
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            elif not isinstance(ophthalmology, dict):
+                return Response({
+                    'ophthalmology': ['Ophthalmology must be a valid JSON object']
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Set default empty ophthalmology if none provided
+            data['ophthalmology'] = {}
+
         # Save uploaded files in GridFS and update data dict with file IDs
         if xray_file:
             file_id = fs.put(xray_file.read(), filename=xray_file.name, content_type=xray_file.content_type)
@@ -309,13 +358,10 @@ def save_investigation(request):
             file_id = fs.put(audiometric_file.read(), filename=audiometric_file.name, content_type=audiometric_file.content_type)
             data['audiometric_file'] = str(file_id)
 
-        # Convert JSON fields if sent as strings
-        vitals = data.get('vitals')
-        ophthalmology = data.get('ophthalmology')
-        if vitals and isinstance(vitals, str):
-            data['vitals'] = json.loads(vitals)
-        if ophthalmology and isinstance(ophthalmology, str):
-            data['ophthalmology'] = json.loads(ophthalmology)
+        # Debug: Print the data being sent to serializer
+        print(f"Data being sent to serializer: {data}")
+        print(f"Vitals type: {type(data.get('vitals'))}, Value: {data.get('vitals')}")
+        print(f"Ophthalmology type: {type(data.get('ophthalmology'))}, Value: {data.get('ophthalmology')}")
 
         # Serialize and save
         serializer = InvestigationSerializer(data=data)
@@ -323,12 +369,14 @@ def save_investigation(request):
             inv = serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         else:
+            print(f"Serializer errors: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
+    finally:
+        # Close MongoDB connection
+        client.close()
 
 
 from ..models import Billing
@@ -336,11 +384,9 @@ from ..models import Billing
 def get_all_employees(request):
     """
     Fetch all employees referenced in Billing.
-    Return only employee_name, age, gender, employee_id
+    Return only employee_name, age, gender, employee_id, barcode
     """
-
     # MongoDB connection
-
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     collection = db["core_employeeregistration"]
@@ -356,5 +402,14 @@ def get_all_employees(request):
                     "age": employee.get("age", ""),
                     "gender": employee.get("gender", ""),
                     "employee_id": employee.get("employee_id", ""),
+                    "barcode": str(billing.barcode) if hasattr(billing, "barcode") else "",
                 }
     return Response(list(employees_map.values()))
+
+
+
+@api_view(["GET"])
+def get_all_registered_employees(request):
+    employees = EmployeeRegistration.objects.all()
+    serializer = EmployeeRegistrationSerializer(employees, many=True)
+    return Response(serializer.data)
