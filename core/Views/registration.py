@@ -261,121 +261,109 @@ from pymongo import MongoClient
 import gridfs
 from ..models import Investigation
 from ..serializers import InvestigationSerializer
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import status
+from rest_framework.response import Response
+from pymongo import MongoClient
+import gridfs, json
+
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
 def save_investigation(request):
-    data = request.data.copy()
-    
-    # Get files from request
+    """
+    Save Investigation with vitals, ophthalmology JSON + files to GridFS
+    """
+    # Convert QueryDict to mutable dict
+    data = dict(request.data)
+
+    # Convert single-value lists to plain values
+    for key, val in data.items():
+        if isinstance(val, list) and len(val) == 1:
+            data[key] = val[0]
+
+    # Get files from request.FILES
     xray_file = request.FILES.get('xray_file')
     scan_file = request.FILES.get('scan_file')
     ecg_file = request.FILES.get('ecg_file')
     pft_file = request.FILES.get('pft_file')
     audiometric_file = request.FILES.get('audiometric_file')
 
-    # MongoDB connection
+    # MongoDB GridFS connection
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     fs = gridfs.GridFS(db)
 
     try:
-        # Convert and validate JSON fields BEFORE serializer validation
-        # Handle QueryDict - get first value from list for each field
-        vitals = data.get('vitals')
-        ophthalmology = data.get('ophthalmology')
-        
-        # Extract string from QueryDict list if needed
-        if isinstance(vitals, list) and len(vitals) > 0:
-            vitals = vitals[0]
-        if isinstance(ophthalmology, list) and len(ophthalmology) > 0:
-            ophthalmology = ophthalmology[0]
-        
-        # Handle vitals JSON
-        if vitals:
-            if isinstance(vitals, str):
-                try:
-                    parsed_vitals = json.loads(vitals)
-                    # Validate vitals structure
-                    if not isinstance(parsed_vitals, dict):
-                        return Response({
-                            'vitals': ['Vitals must be a valid JSON object']
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                    data['vitals'] = parsed_vitals
-                except json.JSONDecodeError as e:
-                    return Response({
-                        'vitals': [f'Invalid JSON format: {str(e)}']
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            elif not isinstance(vitals, dict):
-                return Response({
-                    'vitals': ['Vitals must be a valid JSON object']
-                }, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # Set default empty vitals if none provided
-            data['vitals'] = {}
+        # --- Parse JSON fields safely ---
+        for field in ['vitals', 'ophthalmology']:
+            raw_val = data.get(field)
+            if raw_val:
+                if isinstance(raw_val, str):
+                    try:
+                        parsed_val = json.loads(raw_val)
+                        if not isinstance(parsed_val, dict):
+                            return Response(
+                                {field: [f"{field.capitalize()} must be a JSON object"]},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+                        data[field] = parsed_val
+                    except json.JSONDecodeError as e:
+                        return Response(
+                            {field: [f"Invalid JSON format: {str(e)}"]},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                elif not isinstance(raw_val, dict):
+                    return Response(
+                        {field: [f"{field.capitalize()} must be a JSON object"]},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                data[field] = {}
 
-        # Handle ophthalmology JSON
-        if ophthalmology:
-            if isinstance(ophthalmology, str):
-                try:
-                    parsed_ophthalmology = json.loads(ophthalmology)
-                    # Validate ophthalmology structure
-                    if not isinstance(parsed_ophthalmology, dict):
-                        return Response({
-                            'ophthalmology': ['Ophthalmology must be a valid JSON object']
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                    data['ophthalmology'] = parsed_ophthalmology
-                except json.JSONDecodeError as e:
-                    return Response({
-                        'ophthalmology': [f'Invalid JSON format: {str(e)}']
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            elif not isinstance(ophthalmology, dict):
-                return Response({
-                    'ophthalmology': ['Ophthalmology must be a valid JSON object']
-                }, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # Set default empty ophthalmology if none provided
-            data['ophthalmology'] = {}
-
-        # Save uploaded files in GridFS and update data dict with file IDs
+        # --- Save files to GridFS ---
         if xray_file:
-            file_id = fs.put(xray_file.read(), filename=xray_file.name, content_type=xray_file.content_type)
+            file_id = fs.put(xray_file.read(),
+                             filename=xray_file.name,
+                             content_type=xray_file.content_type)
             data['xray_file'] = str(file_id)
 
         if scan_file:
-            file_id = fs.put(scan_file.read(), filename=scan_file.name, content_type=scan_file.content_type)
+            file_id = fs.put(scan_file.read(),
+                             filename=scan_file.name,
+                             content_type=scan_file.content_type)
             data['scan_file'] = str(file_id)
 
         if ecg_file:
-            file_id = fs.put(ecg_file.read(), filename=ecg_file.name, content_type=ecg_file.content_type)
+            file_id = fs.put(ecg_file.read(),
+                             filename=ecg_file.name,
+                             content_type=ecg_file.content_type)
             data['ecg_file'] = str(file_id)
 
         if pft_file:
-            file_id = fs.put(pft_file.read(), filename=pft_file.name, content_type=pft_file.content_type)
+            file_id = fs.put(pft_file.read(),
+                             filename=pft_file.name,
+                             content_type=pft_file.content_type)
             data['pft_file'] = str(file_id)
 
         if audiometric_file:
-            file_id = fs.put(audiometric_file.read(), filename=audiometric_file.name, content_type=audiometric_file.content_type)
+            file_id = fs.put(audiometric_file.read(),
+                             filename=audiometric_file.name,
+                             content_type=audiometric_file.content_type)
             data['audiometric_file'] = str(file_id)
 
-        # Debug: Print the data being sent to serializer
-        print(f"Data being sent to serializer: {data}")
-        print(f"Vitals type: {type(data.get('vitals'))}, Value: {data.get('vitals')}")
-        print(f"Ophthalmology type: {type(data.get('ophthalmology'))}, Value: {data.get('ophthalmology')}")
-
-        # Serialize and save
+        # --- Serialize & Save ---
         serializer = InvestigationSerializer(data=data)
         if serializer.is_valid():
             inv = serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         else:
-            print(f"Serializer errors: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     finally:
-        # Close MongoDB connection
         client.close()
 
 
@@ -413,3 +401,4 @@ def get_all_registered_employees(request):
     employees = EmployeeRegistration.objects.all()
     serializer = EmployeeRegistrationSerializer(employees, many=True)
     return Response(serializer.data)
+
