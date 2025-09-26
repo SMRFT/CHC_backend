@@ -261,6 +261,7 @@ from pymongo import MongoClient
 import gridfs
 from ..models import Investigation
 from ..serializers import InvestigationSerializer
+
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework import status
@@ -268,99 +269,69 @@ from rest_framework.response import Response
 from pymongo import MongoClient
 import gridfs, json
 
-
+import os
+import json
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+from pymongo import MongoClient
+import gridfs
+from ..models import Investigation
+from ..serializers import InvestigationSerializer
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import status
+from rest_framework.response import Response
+from pymongo import MongoClient
+import gridfs, json
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
 def save_investigation(request):
-    """
-    Save Investigation with vitals, ophthalmology JSON + files to GridFS
-    """
-    # Convert QueryDict to mutable dict
     data = dict(request.data)
-
     # Convert single-value lists to plain values
     for key, val in data.items():
         if isinstance(val, list) and len(val) == 1:
             data[key] = val[0]
-
-    # Get files from request.FILES
-    xray_file = request.FILES.get('xray_file')
-    scan_file = request.FILES.get('scan_file')
-    ecg_file = request.FILES.get('ecg_file')
-    pft_file = request.FILES.get('pft_file')
-    audiometric_file = request.FILES.get('audiometric_file')
-
-    # MongoDB GridFS connection
+    # Get files
+    files_mapping = {
+        'xray_file': request.FILES.get('xray_file'),
+        'xrayfilm_file': request.FILES.get('xrayfilm_file'),  # fixed name
+        'ecg_file': request.FILES.get('ecg_file'),
+        'pft_file': request.FILES.get('pft_file'),
+        'audiometric_file': request.FILES.get('audiometric_file')
+    }
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     fs = gridfs.GridFS(db)
-
     try:
-        # --- Parse JSON fields safely ---
-        for field in ['vitals', 'ophthalmology']:
-            raw_val = data.get(field)
-            if raw_val:
-                if isinstance(raw_val, str):
-                    try:
-                        parsed_val = json.loads(raw_val)
-                        if not isinstance(parsed_val, dict):
-                            return Response(
-                                {field: [f"{field.capitalize()} must be a JSON object"]},
-                                status=status.HTTP_400_BAD_REQUEST
-                            )
-                        data[field] = parsed_val
-                    except json.JSONDecodeError as e:
-                        return Response(
-                            {field: [f"Invalid JSON format: {str(e)}"]},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-                elif not isinstance(raw_val, dict):
-                    return Response(
-                        {field: [f"{field.capitalize()} must be a JSON object"]},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-            else:
-                data[field] = {}
-
-        # --- Save files to GridFS ---
-        if xray_file:
-            file_id = fs.put(xray_file.read(),
-                             filename=xray_file.name,
-                             content_type=xray_file.content_type)
-            data['xray_file'] = str(file_id)
-
-        if scan_file:
-            file_id = fs.put(scan_file.read(),
-                             filename=scan_file.name,
-                             content_type=scan_file.content_type)
-            data['scan_file'] = str(file_id)
-
-        if ecg_file:
-            file_id = fs.put(ecg_file.read(),
-                             filename=ecg_file.name,
-                             content_type=ecg_file.content_type)
-            data['ecg_file'] = str(file_id)
-
-        if pft_file:
-            file_id = fs.put(pft_file.read(),
-                             filename=pft_file.name,
-                             content_type=pft_file.content_type)
-            data['pft_file'] = str(file_id)
-
-        if audiometric_file:
-            file_id = fs.put(audiometric_file.read(),
-                             filename=audiometric_file.name,
-                             content_type=audiometric_file.content_type)
-            data['audiometric_file'] = str(file_id)
-
-        # --- Serialize & Save ---
-        serializer = InvestigationSerializer(data=data)
-        if serializer.is_valid():
-            inv = serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # Parse vitals JSON
+        raw_val = data.get('vitals')
+        if raw_val:
+            if isinstance(raw_val, str):
+                data['vitals'] = json.loads(raw_val)
+            elif not isinstance(raw_val, dict):
+                data['vitals'] = {}
+        # Save files to GridFS
+        for field, file_obj in files_mapping.items():
+            if file_obj:
+                file_id = fs.put(file_obj.read(), filename=file_obj.name, content_type=file_obj.content_type)
+                data[field] = str(file_id)
+        # Try to find an existing investigation by barcode
+        inv = Investigation.objects.filter(barcode=data.get('barcode')).first()
+        if inv:
+            # Update existing record
+            for key, value in data.items():
+                setattr(inv, key, value)
+            inv.save()
+            created = False
         else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+            # Create new record
+            inv = Investigation.objects.create(**data)
+            created = True
+        serializer = InvestigationSerializer(inv)
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=status_code)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     finally:
@@ -395,10 +366,22 @@ def get_all_employees(request):
     return Response(list(employees_map.values()))
 
 
-
 @api_view(["GET"])
 def get_all_registered_employees(request):
     employees = EmployeeRegistration.objects.all()
     serializer = EmployeeRegistrationSerializer(employees, many=True)
     return Response(serializer.data)
 
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from ..models import Ophthalmology
+from ..serializers import OphthalmologySerializer
+@api_view(['POST'])
+def save_Ophthalmology(request):
+    serializer = OphthalmologySerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response({"message": "Ophthalmology data saved successfully!"}, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
