@@ -20,7 +20,8 @@ urlpatterns = [
     
     # Batch URLs
     path('batch/', sample.batch_management, name='batch_management'),    
-
+    path("save_investigation/",registration.save_investigation, name="save_investigation"),
+    path('save_ophthalmology/', registration.save_Ophthalmology, name='save_ophthalmology'),
 
      path("get_packages/",registration.get_packages, name="get_packages"),
      path("save_investigation/",registration.save_investigation, name="save_investigation"),
