@@ -68,21 +68,41 @@ class Batch(AuditModel):
         return self.batch_number
     
 
-class Investigation(AuditModel):
+class Investigation(models.Model):
     employee_id = models.CharField(max_length=50)
-    vitals = models.JSONField()  # height, weight, bmi, bp, spo2, temperature
-    ophthalmology = models.JSONField()
-    notes = models.CharField(max_length=1200,blank=True, null=True)
+    vitals = models.JSONField()  # height, weight, bmi, bp, spo2
     gender = models.CharField(max_length=10)
     age = models.IntegerField()
-    barcode = models.CharField(max_length=50)
+    barcode = models.CharField(max_length=50, primary_key=True)
     date = models.DateTimeField(auto_now_add=True)
-    # Files (all single file paths)
+    patient_history = models.CharField(max_length=1200, blank=True, null=True)
+    ecg_notes = models.CharField(max_length=500, blank=True, null=True)
+    pft_notes = models.CharField(max_length=500, blank=True, null=True)
+    audiometry_notes = models.CharField(max_length=500, blank=True, null=True)
+    # Files
     xray_file = models.CharField(max_length=200, blank=True, null=True)
-    scan_file = models.CharField(max_length=200, blank=True, null=True)
+    xrayfilm_file = models.CharField(max_length=200, blank=True, null=True)
     ecg_file = models.CharField(max_length=200, blank=True, null=True)
     pft_file = models.CharField(max_length=200, blank=True, null=True)
     audiometric_file = models.CharField(max_length=200, blank=True, null=True)
-    company_id = models.CharField(max_length=10,default="CHC001")
+    company_id = models.CharField(max_length=10, default="CHC001")
     def __str__(self):
         return f"Investigation: {self.employee_id} ({self.created_at.date()})"
+
+
+from django.db import models
+from django.utils import timezone
+import json
+class Ophthalmology(models.Model):
+    barcode = models.CharField(max_length=50, primary_key=True)
+    right_eye = models.JSONField()   # stores SPH, CYL, AXIS, ADD as JSON
+    left_eye = models.JSONField()
+    visual_acuity = models.JSONField()  # stores uncorrected/corrected values as array
+    remarks = models.TextField(blank=True, null=True)
+    date = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    def save_Ophthalmology(self, *args, **kwargs):
+        # custom save if needed
+        super().save(*args, **kwargs)
+    def __str__(self):
+        return f"Ophthalmology - {self.barcode}"
