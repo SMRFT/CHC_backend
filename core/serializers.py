@@ -57,3 +57,12 @@ class InvestigationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Investigation
         fields = "__all__"
+
+
+from .models import Ophthalmology
+class OphthalmologySerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    
+    class Meta:
+        model = Ophthalmology
+        fields = "__all__"
