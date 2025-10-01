@@ -378,6 +378,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from ..models import Ophthalmology
 from ..serializers import OphthalmologySerializer
+
 @api_view(['POST'])
 def save_Ophthalmology(request):
     serializer = OphthalmologySerializer(data=request.data)
@@ -385,3 +386,210 @@ def save_Ophthalmology(request):
         serializer.save()
         return Response({"message": "Ophthalmology data saved successfully!"}, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from ..models import Investigation
+from ..serializers import InvestigationSerializer
+from pymongo import MongoClient
+client = MongoClient(MONGO_URI)
+db = client["Corporatehealthcheckup"]
+employee_collection = db["core_employeeregistration"]
+@api_view(['GET'])
+def get_investigations(request):
+    """
+    Returns all Investigation records joined with employee_name from core_employeeregistration.
+    """
+    try:
+        investigations = Investigation.objects.all()
+        serializer = InvestigationSerializer(investigations, many=True)
+        enriched_data = []
+        for inv in serializer.data:
+            emp = employee_collection.find_one({"barcode": inv["barcode"]})
+            inv["employee_name"] = emp["employee_name"] if emp and "employee_name" in emp else "-"
+            enriched_data.append(inv)
+        return Response(enriched_data, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from ..models import Investigation
+@api_view(['PATCH'])
+def approve_investigation(request, barcode):
+    """
+    Approve a single investigation by barcode.
+    """
+    try:
+        record = Investigation.objects.get(barcode=barcode)
+        if record.status == "pending":
+            record.status = "approved"
+            record.save(update_fields=['status'])  # Only update the status field
+        return Response({"message": "Investigation approved successfully", "status": record.status}, status=status.HTTP_200_OK)
+    except Investigation.DoesNotExist:
+        return Response({"error": "Investigation not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+
+from django.http import HttpResponse, JsonResponse
+from rest_framework.decorators import api_view
+from rest_framework import status
+from pymongo import MongoClient
+import gridfs
+from bson.objectid import ObjectId
+import mimetypes
+import os
+# Connect to MongoDB
+client = MongoClient(MONGO_URI)
+db = client["Corporatehealthcheckup"]
+fs = gridfs.GridFS(db)
+@api_view(['GET'])
+def get_file(request, file_id):
+    """
+    Fetch a file from GridFS by file_id and return as HTTP response.
+    """
+    try:
+        file_obj = fs.get(ObjectId(file_id))
+        content_type, _ = mimetypes.guess_type(file_obj.filename)
+        response = HttpResponse(file_obj.read(), content_type=content_type or "application/octet-stream")
+        response['Content-Disposition'] = f'inline; filename="{file_obj.filename}"'
+        return response
+    except gridfs.NoFile:
+        return JsonResponse({"error": "File not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# ----------------------------
+# Get all Ophthalmology records + auto-approve pending
+# ----------------------------
+client = MongoClient(MONGO_URI)
+db = client["Corporatehealthcheckup"]
+fs = gridfs.GridFS(db)
+@api_view(['GET'])
+def get_ophthalmology(request):
+    """
+    Returns all Ophthalmology records joined with employee details.
+    """
+    try:
+        ophthalmology = Ophthalmology.objects.all()
+        serializer = OphthalmologySerializer(ophthalmology, many=True)
+        enriched_data = []
+        for op in serializer.data:
+            emp = employee_collection.find_one({"barcode": op["barcode"]})
+            # --- Get date properly ---
+            # Use ophthalmology.date if present, else fallback to employee.date
+            op["date"] = op.get("date") or (emp.get("date") if emp else None)
+            if emp:
+                op["employee_name"] = emp.get("employee_name", "-")
+                op["employee_id"] = emp.get("employee_id", "-")
+                op["gender"] = emp.get("gender", "-")
+                op["age"] = emp.get("age", "-")
+            else:
+                op["employee_name"] = "-"
+                op["employee_id"] = "-"
+                op["gender"] = "-"
+                op["age"] = "-"
+            enriched_data.append(op)
+        return Response(enriched_data, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from ..models import Ophthalmology
+from ..serializers import OphthalmologySerializer
+@api_view(['PATCH'])
+def approve_ophthalmology(request, barcode):
+    """
+    Approve a single ophthalmology record by barcode.
+    Only updates the status field.
+    """
+    try:
+        record = Ophthalmology.objects.get(barcode=barcode)
+        if record.status == "pending":
+            record.status = "approved"
+            record.save(update_fields=['status'])  # Only update status
+        return Response({"message": "Ophthalmology approved successfully", "status": record.status}, status=status.HTTP_200_OK)
+    except Ophthalmology.DoesNotExist:
+        return Response({"error": "Ophthalmology record not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+
+import os
+import json
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+from pymongo import MongoClient
+import gridfs
+from ..models import Investigation
+from ..serializers import InvestigationSerializer
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import status
+from rest_framework.response import Response
+from pymongo import MongoClient
+import gridfs, json
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+def save_investigation(request):
+    data = dict(request.data)
+    # Convert single-value lists to plain values
+    for key, val in data.items():
+        if isinstance(val, list) and len(val) == 1:
+            data[key] = val[0]
+    # Get files
+    files_mapping = {
+        'xray_file': request.FILES.get('xray_file'),
+        'xrayfilm_file': request.FILES.get('xrayfilm_file'),  # fixed name
+        'ecg_file': request.FILES.get('ecg_file'),
+        'pft_file': request.FILES.get('pft_file'),
+        'audiometric_file': request.FILES.get('audiometric_file')
+    }
+    client = MongoClient(MONGO_URI)
+    db = client["Corporatehealthcheckup"]
+    fs = gridfs.GridFS(db)
+    try:
+        # Parse vitals JSON
+        raw_val = data.get('vitals')
+        if raw_val:
+            if isinstance(raw_val, str):
+                data['vitals'] = json.loads(raw_val)
+            elif not isinstance(raw_val, dict):
+                data['vitals'] = {}
+        # Save files to GridFS
+        for field, file_obj in files_mapping.items():
+            if file_obj:
+                file_id = fs.put(file_obj.read(), filename=file_obj.name, content_type=file_obj.content_type)
+                data[field] = str(file_id)
+        # Try to find an existing investigation by barcode
+        inv = Investigation.objects.filter(barcode=data.get('barcode')).first()
+        if inv:
+            # Update existing record
+            for key, value in data.items():
+                setattr(inv, key, value)
+            inv.save()
+            created = False
+        else:
+            # Create new record
+            inv = Investigation.objects.create(**data)
+            created = True
+        serializer = InvestigationSerializer(inv)
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=status_code)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    finally:
+        client.close()
