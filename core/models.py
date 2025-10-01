@@ -75,6 +75,7 @@ class Investigation(models.Model):
     age = models.IntegerField()
     barcode = models.CharField(max_length=50, primary_key=True)
     date = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, default="pending")
     patient_history = models.CharField(max_length=1200, blank=True, null=True)
     ecg_notes = models.CharField(max_length=500, blank=True, null=True)
     pft_notes = models.CharField(max_length=500, blank=True, null=True)
@@ -100,6 +101,10 @@ class Ophthalmology(models.Model):
     visual_acuity = models.JSONField()  # stores uncorrected/corrected values as array
     remarks = models.TextField(blank=True, null=True)
     date = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(
+        max_length=20,
+        default="pending"
+    )
     created_at = models.DateTimeField(default=timezone.now)
     def save_Ophthalmology(self, *args, **kwargs):
         # custom save if needed
