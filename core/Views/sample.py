@@ -526,8 +526,19 @@ def get_transferred_samples(request):
 
 from ..models import Batch
 from ..serializers import BatchSerializer
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from pymongo import MongoClient
+from collections import Counter
+import json
+import os
+import re
+from ..models import Batch
+from ..serializers import BatchSerializer
+from django.db.models import Max
 
-@api_view(['POST', 'GET'])
+@api_view(['GET', 'POST'])
 def batch_management(request):
     if request.method == 'GET':
         try:
@@ -543,18 +554,32 @@ def batch_management(request):
             mongo_url = os.getenv("GLOBAL_DB_HOST")
             client = MongoClient(mongo_url)
 
-            # Sample collection from Corporatehealthcheckup
             sample_collection = client["Corporatehealthcheckup"]["core_sample"]
-
-            # Test details from Diagnostics
             testdetails_collection = client["Diagnostics"]["core_testdetails"]
 
             # --- Generate next batch number ---
-            last_batch = Batch.objects.exclude(batch_number=None).order_by('-created_date').first()
-            if last_batch and last_batch.batch_number and last_batch.batch_number.isdigit():
-                next_number = str(int(last_batch.batch_number) + 1).zfill(5)
+            max_batch = Batch.objects.exclude(batch_number=None).aggregate(
+                max_number=Max('batch_number')
+            )['max_number']
+
+            if max_batch and max_batch.isdigit():
+                next_number = str(int(max_batch) + 1).zfill(5)
             else:
                 next_number = "00001"
+
+            # Check again in case of race condition
+            if Batch.objects.filter(batch_number=next_number).exists():
+                return Response(
+                    {"batch_number": [f"Batch number {next_number} already exists."]},
+                    status=status.HTTP_400_BAD_REQUEST
+    )
+
+            # --- Validate batch_number uniqueness ---
+            if Batch.objects.filter(batch_number=next_number).exists():
+                return Response(
+                    {"batch_number": [f"Batch number {next_number} already exists."]},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             data = dict(request.data)
             data['batch_number'] = next_number
@@ -580,7 +605,7 @@ def batch_management(request):
                         unique_batch_list.append({"barcode": barcode})
             data["batch_details"] = unique_batch_list
 
-            # --- Collect specimen types using test_id ---
+            # --- Collect specimen types ---
             specimen_counter = Counter()
             batch_barcodes = [item["barcode"] for item in unique_batch_list]
 
@@ -631,7 +656,7 @@ def batch_management(request):
                 for stype, count in specimen_counter.items()
             ]
 
-            # --- Save batch in SQL DB ---
+            # --- Save batch ---
             serializer = BatchSerializer(data=data)
             if serializer.is_valid():
                 batch_instance = serializer.save()
@@ -676,3 +701,4 @@ def batch_management(request):
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
