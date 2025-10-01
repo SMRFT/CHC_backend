@@ -22,7 +22,11 @@ urlpatterns = [
     path('batch/', sample.batch_management, name='batch_management'),    
     path("save_investigation/",registration.save_investigation, name="save_investigation"),
     path('save_ophthalmology/', registration.save_Ophthalmology, name='save_ophthalmology'),
-
+    path('approve_investigation/<str:barcode>/', registration.approve_investigation, name='approve_investigation'),
+    path('approve_ophthalmology/<str:barcode>/', registration.approve_ophthalmology, name='approve_ophthalmology'),
+    path('get_investigations/', registration.get_investigations, name='get_investigations'),
+    path('get_ophthalmology/', registration.get_ophthalmology, name='get_ophthalmology'),
+    path('get_file/<str:file_id>/', registration.get_file, name='get_file'),
      path("get_packages/",registration.get_packages, name="get_packages"),
      path("save_investigation/",registration.save_investigation, name="save_investigation"),
 
