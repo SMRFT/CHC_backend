@@ -53,16 +53,12 @@ class BatchSerializer(serializers.ModelSerializer):
 from .models import Investigation
 class InvestigationSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
-    
     class Meta:
         model = Investigation
         fields = "__all__"
-
-
+from rest_framework import serializers
 from .models import Ophthalmology
 class OphthalmologySerializer(serializers.ModelSerializer):
-    id = ObjectIdField(read_only=True)
-    
     class Meta:
         model = Ophthalmology
         fields = "__all__"
