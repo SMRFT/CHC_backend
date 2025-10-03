@@ -411,9 +411,11 @@ def get_investigations(request):
         serializer = InvestigationSerializer(investigations, many=True)
         enriched_data = []
         for inv in serializer.data:
-            emp = employee_collection.find_one({"barcode": inv["barcode"]})
+            # Match employee_id instead of barcode
+            emp = employee_collection.find_one({"employee_id": inv["employee_id"]})
             inv["employee_name"] = emp["employee_name"] if emp and "employee_name" in emp else "-"
             enriched_data.append(inv)
+
         return Response(enriched_data, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -595,4 +597,5 @@ def save_investigation(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     finally:
         client.close()
+
 
