@@ -362,6 +362,7 @@ def get_all_employees(request):
                     "gender": employee.get("gender", ""),
                     "employee_id": employee.get("employee_id", ""),
                     "barcode": str(billing.barcode) if hasattr(billing, "barcode") else "",
+                    "created_date": employee.get("created_date", "")
                 }
     return Response(list(employees_map.values()))
 
