@@ -20,10 +20,16 @@ class PackageSerializer(serializers.ModelSerializer):
 from .models import EmployeeRegistration
 class EmployeeRegistrationSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
+    barcode = serializers.SerializerMethodField()  # single CharField, not list
 
     class Meta:
         model = EmployeeRegistration
-        fields = '__all__'
+        fields = '__all__'  # includes all + barcode
+
+    def get_barcode(self, obj):
+        billing = Billing.objects.filter(employee_id=obj.employee_id).order_by("-date").first()
+        return billing.barcode if billing else None
+
 
 
 from .models import Billing
