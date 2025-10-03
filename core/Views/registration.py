@@ -397,14 +397,15 @@ from rest_framework import status
 from ..models import Investigation
 from ..serializers import InvestigationSerializer
 from pymongo import MongoClient
-client = MongoClient(MONGO_URI)
-db = client["Corporatehealthcheckup"]
-employee_collection = db["core_employeeregistration"]
+
 @api_view(['GET'])
 def get_investigations(request):
     """
     Returns all Investigation records joined with employee_name from core_employeeregistration.
     """
+    client = MongoClient(MONGO_URI)
+    db = client["Corporatehealthcheckup"]
+    employee_collection = db["core_employeeregistration"]
     try:
         investigations = Investigation.objects.all()
         serializer = InvestigationSerializer(investigations, many=True)
@@ -594,3 +595,4 @@ def save_investigation(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     finally:
         client.close()
+
