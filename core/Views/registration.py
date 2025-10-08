@@ -479,29 +479,55 @@ fs = gridfs.GridFS(db)
 @api_view(['GET'])
 def get_ophthalmology(request):
     """
-    Returns all Ophthalmology records joined with employee details.
+    Returns all Ophthalmology records joined with EmployeeRegistration data,
+    using barcode → Billing → employee_id as the link.
     """
     try:
+        client = MongoClient(MONGO_URI)
+        db = client["Corporatehealthcheckup"]
+        fs = gridfs.GridFS(db)
+        employee_collection = db["core_employeeregistration"]
+
         ophthalmology = Ophthalmology.objects.all()
         serializer = OphthalmologySerializer(ophthalmology, many=True)
+
         enriched_data = []
+
         for op in serializer.data:
-            emp = employee_collection.find_one({"barcode": op["barcode"]})
-            # --- Get date properly ---
-            # Use ophthalmology.date if present, else fallback to employee.date
-            op["date"] = op.get("date") or (emp.get("date") if emp else None)
-            if emp:
-                op["employee_name"] = emp.get("employee_name", "-")
-                op["employee_id"] = emp.get("employee_id", "-")
-                op["gender"] = emp.get("gender", "-")
-                op["age"] = emp.get("age", "-")
-            else:
-                op["employee_name"] = "-"
-                op["employee_id"] = "-"
-                op["gender"] = "-"
-                op["age"] = "-"
+            barcode = op.get("barcode")
+            emp_data = None
+
+            # 🔹 Step 1: Find Billing record linked to this barcode
+            billing = Billing.objects.filter(barcode=barcode).order_by("-date").first()
+
+            # 🔹 Step 2: Find employee record in Mongo using employee_id
+            if billing:
+                emp = employee_collection.find_one({"employee_id": billing.employee_id})
+                if emp:
+                    emp_data = {
+                        "employee_name": emp.get("employee_name", "-"),
+                        "employee_id": emp.get("employee_id", "-"),
+                        "gender": emp.get("gender", "-"),
+                        "age": emp.get("age", "-"),
+                    }
+
+            # 🔹 Step 3: Fallbacks if employee not found
+            if not emp_data:
+                emp_data = {
+                    "employee_name": "-",
+                    "employee_id": "-",
+                    "gender": "-",
+                    "age": "-",
+                }
+
+            # 🔹 Step 4: Merge employee info into Ophthalmology record
+            op.update(emp_data)
+            op["date"] = op.get("date") or (billing.date if billing else None)
+
             enriched_data.append(op)
+
         return Response(enriched_data, status=status.HTTP_200_OK)
+
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -597,5 +623,6 @@ def save_investigation(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     finally:
         client.close()
+
 
 
