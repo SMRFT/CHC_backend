@@ -118,6 +118,9 @@ CORS_ALLOW_HEADERS = [
     "Content-Type",
     "Branch-Code"
 ]
+CORS_ALLOWED_ORIGINS = [
+    "https://chc.shinova.in",
+]
 
 # Internationalization
 # https://docs.djangoproject.com/en/3.2/topics/i18n/
