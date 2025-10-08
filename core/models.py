@@ -10,6 +10,11 @@ class AuditModel(models.Model):
     class Meta:
         abstract = True
 
+class Register(AuditModel):
+    name = models.CharField(max_length=500)
+    role = models.CharField(max_length=500)
+    password = models.CharField(max_length=500)
+    confirmPassword = models.CharField(max_length=500)
 
 class Package(AuditModel):
     package_name = models.CharField(max_length=100, blank=True, null=True)
@@ -94,13 +99,13 @@ class Investigation(models.Model):
 from django.db import models
 from django.utils import timezone
 import json
+
 class Ophthalmology(models.Model):
     barcode = models.CharField(max_length=50, primary_key=True)
-    right_eye = models.JSONField()   # stores SPH, CYL, AXIS, ADD as JSON
-    left_eye = models.JSONField()
     visual_acuity = models.JSONField()  # stores uncorrected/corrected values as array
     remarks = models.TextField(blank=True, null=True)
     date = models.DateTimeField(auto_now_add=True)
+    patient_complaints= models.CharField(max_length=505,blank=True)
     status = models.CharField(
         max_length=20,
         default="pending"
