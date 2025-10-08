@@ -7,9 +7,24 @@ class ObjectIdField(serializers.Field):
         return str(value)
     def to_internal_value(self, data):
         return ObjectId(data)
-    
+from .models import Package, Register
+class RegisterSerializer(serializers.ModelSerializer):
+    confirmPassword = serializers.CharField(write_only=True)
 
-from .models import Package
+    class Meta:
+        model = Register
+        fields = ['name', 'role', 'password', 'confirmPassword']
+        extra_kwargs = {'password': {'write_only': True}}
+
+    def validate(self, data):
+        if data.get('password') != data.get('confirmPassword'):
+            raise serializers.ValidationError({"confirmPassword": "Passwords do not match."})
+        return data
+
+    def create(self, validated_data):
+        validated_data.pop('confirmPassword')  # Remove confirmPassword before saving
+        return Register.objects.create(**validated_data)
+
 class PackageSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     class Meta:
