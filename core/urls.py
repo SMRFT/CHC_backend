@@ -32,9 +32,11 @@ urlpatterns = [
     path("chc_empregisterandbilling/",registration.register_employee_with_billing,name="register_employee_with_billing"),
     path('registration/', security.registration, name='registration'),
     path('login/', security.login, name='login'),
+    path('get_all_ophthalmology/', registration.get_all_ophthalmology),
     # Dashboard Analyticss
     path('employees/', views.get_employees, name='get_employees'),
     path('investigations/', views.get_investigations, name='get_investigations'),
     path('billings/', views.get_billings, name='get_billings'),
     path('dashboard-analytics/', views.get_dashboard_analytics, name='dashboard_analytics'),
 ]
+
