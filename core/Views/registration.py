@@ -625,4 +625,12 @@ def save_investigation(request):
         client.close()
 
 
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from ..models import Ophthalmology  # adjust model name
+@api_view(['GET'])
+def get_all_ophthalmology(request):
+    records = Ophthalmology.objects.all().values('barcode')
+    return Response(list(records))
+
 
