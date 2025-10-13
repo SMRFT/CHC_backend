@@ -1,6 +1,6 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from .models import EmployeeRegistration, Billing, Investigation, Ophthalmology
+from ..models import EmployeeRegistration, Billing, Investigation, Ophthalmology
 from django.core import serializers
 import json
 
