@@ -33,10 +33,10 @@ urlpatterns = [
     path('registration/', security.registration, name='registration'),
     path('login/', security.login, name='login'),
     path('get_all_ophthalmology/', registration.get_all_ophthalmology),
+    path("get_ophthalmology_by_barcode/<str:barcode>/", registration.get_ophthalmology_by_barcode, name="get_ophthalmology_by_barcode"),
     # Dashboard Analyticss
     path('employees/', views.get_employees, name='get_employees'),
     path('investigations/', views.get_investigations, name='get_investigations'),
     path('billings/', views.get_billings, name='get_billings'),
     path('dashboard-analytics/', views.get_dashboard_analytics, name='dashboard_analytics'),
 ]
-

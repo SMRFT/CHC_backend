@@ -422,6 +422,7 @@ def get_investigations(request):
 
 
 
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
@@ -473,9 +474,7 @@ def get_file(request, file_id):
 # ----------------------------
 # Get all Ophthalmology records + auto-approve pending
 # ----------------------------
-client = MongoClient(MONGO_URI)
-db = client["Corporatehealthcheckup"]
-fs = gridfs.GridFS(db)
+
 @api_view(['GET'])
 def get_ophthalmology(request):
     """
@@ -530,6 +529,7 @@ def get_ophthalmology(request):
 
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 
@@ -625,12 +625,38 @@ def save_investigation(request):
         client.close()
 
 
+
+# views.py
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from ..models import Ophthalmology  # adjust model name
+
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from ..models import Ophthalmology
 @api_view(['GET'])
 def get_all_ophthalmology(request):
-    records = Ophthalmology.objects.all().values('barcode')
-    return Response(list(records))
-
-
+    approved_records = Ophthalmology.objects.filter(status='approved').values('barcode', 'status')
+    pending_records = Ophthalmology.objects.filter(status='pending').values('barcode', 'status')
+    return Response({
+        "approved": list(approved_records),
+        "pending": list(pending_records),
+    })
+@api_view(['GET'])
+def get_ophthalmology_by_barcode(request, barcode):
+    try:
+        record = Ophthalmology.objects.filter(barcode=barcode).first()
+        if not record:
+            return Response({"message": "Not found"}, status=404)
+        return Response({
+            "barcode": record.barcode,
+            "visual_acuity": record.visual_acuity,
+            "patient_complaints": record.patient_complaints,
+            "remarks": record.remarks,
+            "status": record.status,
+            "date": record.date,
+        })
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
