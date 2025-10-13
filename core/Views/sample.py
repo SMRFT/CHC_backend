@@ -4,8 +4,14 @@ from rest_framework.response import Response
 from django.db import transaction
 from django.utils import timezone
 from datetime import datetime
-import json
 import os
+import json
+
+import os
+
+import re
+from collections import Counter
+
 from pymongo import MongoClient
 import certifi
 
@@ -44,14 +50,13 @@ def get_billing_patients(request):
             
         if employee_id:
             billings = billings.filter(employee_id__icontains=employee_id)
-            
         if barcode:
             billings = billings.filter(barcode__icontains=barcode)
         
         # Filter only billings that have testdetails with test_id AND are not fully collected/transferred
         billing_data = []
         for billing in billings:
-            # Parse test details to check for test_id and get count
+            has_uncollected = False
             test_count = 0
             has_uncollected_tests = False
             
@@ -126,26 +131,23 @@ def get_billing_patients(request):
                 
                 # Get employee details
                 try:
-                    employee = EmployeeRegistration.objects.get(employee_id=billing.employee_id)
-                    billing_dict['employee_name'] = employee.employee_name
-                    billing_dict['age'] = employee.age
-                    billing_dict['gender'] = employee.gender
-                    billing_dict['company_name'] = employee.company_name
-                    billing_dict['department'] = employee.department
+                    emp = EmployeeRegistration.objects.get(employee_id=billing.employee_id)
+                    billing_dict['employee_name'] = emp.employee_name
+                    billing_dict['age'] = emp.age
+                    billing_dict['gender'] = emp.gender
+                    billing_dict['department'] = emp.department
                 except EmployeeRegistration.DoesNotExist:
-                    billing_dict['employee_name'] = 'Unknown'
-                    billing_dict['age'] = None
-                    billing_dict['gender'] = 'Unknown'
-                    billing_dict['company_name'] = 'Unknown'
-                    billing_dict['department'] = 'Unknown'
-                
+                    billing_dict.update({
+                        'employee_name': 'Unknown',
+                        'age': None,
+                        'gender': 'Unknown',
+                        'department': 'Unknown'
+                    })
+
                 billing_data.append(billing_dict)
-        
-        return Response({
-            'results': billing_data,
-            'count': len(billing_data)
-        })
-        
+
+        return Response({'results': billing_data, 'count': len(billing_data)})
+
     except Exception as e:
         print(f"Error in get_billing_patients: {e}")
         return Response({'error': str(e)}, status=500)
@@ -217,7 +219,13 @@ def sample_management(request):
             })
 
         except Exception as e:
+            print(f"Error in sample_management GET: {e}")
             return Response({'error': str(e)}, status=500)
+        finally:
+            try:
+                client.close()
+            except:
+                pass
 
     elif request.method == 'POST':
         # <CHANGE> Create or update sample collection with required date, company_id, barcode
@@ -559,10 +567,22 @@ def get_transferred_samples(request):
         return Response({'error': str(e)}, status=500)
 
 
-@api_view(['POST', 'GET'])
+from ..models import Batch
+from ..serializers import BatchSerializer
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from pymongo import MongoClient
+from collections import Counter
+import json
+import os
+import re
+from ..models import Batch
+from ..serializers import BatchSerializer
+from django.db.models import Max
+
+@api_view(['GET', 'POST'])
 def batch_management(request):
-    """Handle batch creation and retrieval"""
-    
     if request.method == 'GET':
         try:
             batches = Batch.objects.all().order_by('-created_date')
@@ -573,108 +593,155 @@ def batch_management(request):
 
     elif request.method == 'POST':
         try:
-            with transaction.atomic():
-                # Generate next batch number
-                last_batch = Batch.objects.order_by('-created_date').first()
-                if last_batch and last_batch.batch_number:
-                    try:
-                        next_number = str(int(last_batch.batch_number) + 1).zfill(5)
-                    except ValueError:
-                        next_number = "00001"
-                else:
-                    next_number = "00001"
+            # --- MongoDB connections ---
+            mongo_url = os.getenv("GLOBAL_DB_HOST")
+            client = MongoClient(mongo_url)
 
-                data = dict(request.data)
-                data['batch_number'] = next_number
+            sample_collection = client["Corporatehealthcheckup"]["core_sample"]
+            testdetails_collection = client["Diagnostics"]["core_testdetails"]
 
-                # Parse and deduplicate batch_details
-                raw_batch_details = request.data.get("batch_details", [])
-                if isinstance(raw_batch_details, str):
-                    try:
-                        raw_batch_details = json.loads(raw_batch_details)
-                    except json.JSONDecodeError:
-                        return Response({"error": "Invalid JSON in batch_details"}, status=400)
+            # --- Generate next batch number ---
+            max_batch = Batch.objects.exclude(batch_number=None).aggregate(
+                max_number=Max('batch_number')
+            )['max_number']
 
-                if not isinstance(raw_batch_details, list):
-                    return Response({"error": "batch_details must be a list"}, status=400)
+            if max_batch and max_batch.isdigit():
+                next_number = str(int(max_batch) + 1).zfill(5)
+            else:
+                next_number = "00001"
 
-                # Deduplicate barcodes
-                seen_barcodes = set()
-                unique_batch_list = []
-                for item in raw_batch_details:
-                    if isinstance(item, dict):
-                        barcode = item.get("barcode")
-                        if barcode and barcode not in seen_barcodes:
-                            seen_barcodes.add(barcode)
-                            unique_batch_list.append({"barcode": barcode})
+            # Check again in case of race condition
+            if Batch.objects.filter(batch_number=next_number).exists():
+                return Response(
+                    {"batch_number": [f"Batch number {next_number} already exists."]},
+                    status=status.HTTP_400_BAD_REQUEST
+    )
 
-                data["batch_details"] = unique_batch_list
+            # --- Validate batch_number uniqueness ---
+            if Batch.objects.filter(batch_number=next_number).exists():
+                return Response(
+                    {"batch_number": [f"Batch number {next_number} already exists."]},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-                # Calculate specimen counts from samples with transferred tests
-                specimen_counts = {}
-                batch_barcodes = [item["barcode"] for item in unique_batch_list]
-                samples = Sample.objects.filter(barcode__in=batch_barcodes)
-                
-                for sample in samples:
-                    if sample.testdetails:
+            data = dict(request.data)
+            data['batch_number'] = next_number
+
+            # --- Parse and deduplicate batch_details ---
+            raw_batch_details = request.data.get("batch_details", [])
+            if isinstance(raw_batch_details, str):
+                try:
+                    raw_batch_details = json.loads(raw_batch_details)
+                except json.JSONDecodeError:
+                    return Response({"error": "Invalid JSON in batch_details"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not isinstance(raw_batch_details, list):
+                return Response({"error": "batch_details must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+
+            seen_barcodes = set()
+            unique_batch_list = []
+            for item in raw_batch_details:
+                if isinstance(item, dict):
+                    barcode = item.get("barcode")
+                    if barcode and barcode not in seen_barcodes:
+                        seen_barcodes.add(barcode)
+                        unique_batch_list.append({"barcode": barcode})
+            data["batch_details"] = unique_batch_list
+
+            # --- Collect specimen types ---
+            specimen_counter = Counter()
+            batch_barcodes = [item["barcode"] for item in unique_batch_list]
+
+            sample_records = sample_collection.find({"barcode": {"$in": batch_barcodes}})
+
+            for record in sample_records:
+                testdetails_raw = record.get("testdetails")
+                if not testdetails_raw:
+                    continue
+
+                testdetails = []
+                try:
+                    if isinstance(testdetails_raw, list):
+                        testdetails = testdetails_raw
+                    elif isinstance(testdetails_raw, str):
                         try:
-                            if isinstance(sample.testdetails, str):
-                                tests = json.loads(sample.testdetails)
-                            else:
-                                tests = sample.testdetails or []
-                        except:
+                            testdetails = json.loads(testdetails_raw)
+                        except json.JSONDecodeError:
+                            # Fix unquoted keys
+                            fixed_json = re.sub(
+                                r'([{,])(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:',
+                                r'\1"\3":',
+                                testdetails_raw
+                            )
+                            testdetails = json.loads(fixed_json)
+                    elif isinstance(testdetails_raw, dict):
+                        testdetails = [testdetails_raw]
+                except Exception as e:
+                    print(f"Error parsing testdetails for barcode {record.get('barcode')}: {str(e)}")
+                    continue
+
+                for test in testdetails:
+                    if isinstance(test, dict):
+                        test_id = test.get("test_id")
+                        if test_id:
+                            core_test = testdetails_collection.find_one({"test_id": test_id})
+                            if core_test and core_test.get("specimen_type"):
+                                specimen_counter[core_test["specimen_type"]] += 1
+                        else:
+                            testname = test.get("testname")
+                            if testname:
+                                core_test = testdetails_collection.find_one({"test_name": testname})
+                                if core_test and core_test.get("specimen_type"):
+                                    specimen_counter[core_test["specimen_type"]] += 1
+
+            data["specimen_count"] = [
+                {"specimen_type": stype, "count": count}
+                for stype, count in specimen_counter.items()
+            ]
+
+            # --- Save batch ---
+            serializer = BatchSerializer(data=data)
+            if serializer.is_valid():
+                batch_instance = serializer.save()
+                print(f"Batch {next_number} created successfully with {len(unique_batch_list)} samples")
+                print(f"Specimen count breakdown: {data['specimen_count']}")
+
+                # --- Update batch_number in core_sample for Transferred tests ---
+                for item in unique_batch_list:
+                    barcode = item.get("barcode")
+                    if not barcode:
+                        continue
+
+                    sample_doc = sample_collection.find_one({"barcode": barcode})
+                    if sample_doc:
+                        testdetails_raw = sample_doc.get("testdetails")
+                        try:
+                            testdetails = json.loads(testdetails_raw) if isinstance(testdetails_raw, str) else testdetails_raw
+                        except Exception:
                             continue
-                            
-                        for test in tests:
-                            if (isinstance(test, dict) and 
-                                test.get('test_id') and 
-                                test.get('samplestatus') == 'Transferred'):
-                                specimen_type = test.get('specimen_type', 'Standard')
-                                specimen_counts[specimen_type] = specimen_counts.get(specimen_type, 0) + 1
 
-                data["specimen_count"] = [
-                    {"specimen_type": specimen_type, "count": count}
-                    for specimen_type, count in specimen_counts.items()
-                ]
+                        updated = False
+                        for test in testdetails:
+                            if (
+                                isinstance(test, dict) and
+                                test.get("samplestatus") == "Transferred" and
+                                test.get("batch_number") in [None, '', 'null']
+                            ):
+                                test["batch_number"] = next_number
+                                updated = True
 
-                # Set shipment details
-                data["shipment_from"] = "Laboratory Collection Center"
-                data["shipment_to"] = "Shanmuga Reference Lab"
+                        if updated:
+                            sample_collection.update_one(
+                                {"_id": sample_doc["_id"]},
+                                {"$set": {"testdetails": json.dumps(testdetails, ensure_ascii=False)}}
+                            )
 
-                # Create batch
-                serializer = BatchSerializer(data=data)
-                if serializer.is_valid():
-                    batch_instance = serializer.save()
-                    
-                    # Update batch_number for transferred tests
-                    for sample in samples:
-                        if sample.testdetails:
-                            try:
-                                if isinstance(sample.testdetails, str):
-                                    tests = json.loads(sample.testdetails)
-                                else:
-                                    tests = sample.testdetails or []
-                            except:
-                                continue
-                                
-                            updated = False
-                            for test in tests:
-                                if (isinstance(test, dict) and 
-                                    test.get('test_id') and 
-                                    test.get('samplestatus') == 'Transferred' and
-                                    not test.get('batch_number')):
-                                    test['batch_number'] = next_number
-                                    updated = True
-                            
-                            if updated:
-                                sample.testdetails = tests
-                                sample.save()
-
-                    return Response(serializer.data, status=status.HTTP_201_CREATED)
-                else:
-                    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

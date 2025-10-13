@@ -151,12 +151,7 @@ from ..models import EmployeeRegistration, Billing
 from ..serializers import EmployeeRegistrationSerializer, BillingSerializer
 from rest_framework.exceptions import ValidationError
 import json
-from ..serializers import EmployeeRegistrationSerializer, BillingSerializer
-from rest_framework.exceptions import ValidationError
-import json
-from ..serializers import EmployeeRegistrationSerializer, BillingSerializer
-from rest_framework.exceptions import ValidationError
-import json
+
 @api_view(['POST'])
 def register_employee_with_billing(request):
     """
@@ -167,11 +162,9 @@ def register_employee_with_billing(request):
 
         # --- EmployeeRegistration ---
         employee_payload = {
-            "barcode": data.get("barcode"),
             "employee_name": data.get("employee_name") ,
             "employee_id": data.get("employee_id"),
             "gender": data.get("gender"),
-            "dob": data.get("dob"),
             "age": data.get("age"),
             "company_name": data.get("company_name"),
             "department": data.get("department") or None,  # convert blank to None
@@ -269,66 +262,80 @@ import gridfs
 from ..models import Investigation
 from ..serializers import InvestigationSerializer
 
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import status
+from rest_framework.response import Response
+from pymongo import MongoClient
+import gridfs, json
+
+import os
+import json
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+from pymongo import MongoClient
+import gridfs
+from ..models import Investigation
+from ..serializers import InvestigationSerializer
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import status
+from rest_framework.response import Response
+from pymongo import MongoClient
+import gridfs, json
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
 def save_investigation(request):
-    data = request.data.copy()
-    
-    # Get files from request
-    xray_file = request.FILES.get('xray_file')
-    scan_file = request.FILES.get('scan_file')
-    ecg_file = request.FILES.get('ecg_file')
-    pft_file = request.FILES.get('pft_file')
-    audiometric_file = request.FILES.get('audiometric_file')
-
-    # MongoDB connection
-
+    data = dict(request.data)
+    # Convert single-value lists to plain values
+    for key, val in data.items():
+        if isinstance(val, list) and len(val) == 1:
+            data[key] = val[0]
+    # Get files
+    files_mapping = {
+        'xray_file': request.FILES.get('xray_file'),
+        'xrayfilm_file': request.FILES.get('xrayfilm_file'),  # fixed name
+        'ecg_file': request.FILES.get('ecg_file'),
+        'pft_file': request.FILES.get('pft_file'),
+        'audiometric_file': request.FILES.get('audiometric_file')
+    }
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     fs = gridfs.GridFS(db)
-
     try:
-        # Save uploaded files in GridFS and update data dict with file IDs
-        if xray_file:
-            file_id = fs.put(xray_file.read(), filename=xray_file.name, content_type=xray_file.content_type)
-            data['xray_file'] = str(file_id)
-
-        if scan_file:
-            file_id = fs.put(scan_file.read(), filename=scan_file.name, content_type=scan_file.content_type)
-            data['scan_file'] = str(file_id)
-
-        if ecg_file:
-            file_id = fs.put(ecg_file.read(), filename=ecg_file.name, content_type=ecg_file.content_type)
-            data['ecg_file'] = str(file_id)
-
-        if pft_file:
-            file_id = fs.put(pft_file.read(), filename=pft_file.name, content_type=pft_file.content_type)
-            data['pft_file'] = str(file_id)
-
-        if audiometric_file:
-            file_id = fs.put(audiometric_file.read(), filename=audiometric_file.name, content_type=audiometric_file.content_type)
-            data['audiometric_file'] = str(file_id)
-
-        # Convert JSON fields if sent as strings
-        vitals = data.get('vitals')
-        ophthalmology = data.get('ophthalmology')
-        if vitals and isinstance(vitals, str):
-            data['vitals'] = json.loads(vitals)
-        if ophthalmology and isinstance(ophthalmology, str):
-            data['ophthalmology'] = json.loads(ophthalmology)
-
-        # Serialize and save
-        serializer = InvestigationSerializer(data=data)
-        if serializer.is_valid():
-            inv = serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # Parse vitals JSON
+        raw_val = data.get('vitals')
+        if raw_val:
+            if isinstance(raw_val, str):
+                data['vitals'] = json.loads(raw_val)
+            elif not isinstance(raw_val, dict):
+                data['vitals'] = {}
+        # Save files to GridFS
+        for field, file_obj in files_mapping.items():
+            if file_obj:
+                file_id = fs.put(file_obj.read(), filename=file_obj.name, content_type=file_obj.content_type)
+                data[field] = str(file_id)
+        # Try to find an existing investigation by barcode
+        inv = Investigation.objects.filter(barcode=data.get('barcode')).first()
+        if inv:
+            # Update existing record
+            for key, value in data.items():
+                setattr(inv, key, value)
+            inv.save()
+            created = False
         else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+            # Create new record
+            inv = Investigation.objects.create(**data)
+            created = True
+        serializer = InvestigationSerializer(inv)
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=status_code)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
+    finally:
+        client.close()
 
 
 from ..models import Billing
@@ -336,11 +343,9 @@ from ..models import Billing
 def get_all_employees(request):
     """
     Fetch all employees referenced in Billing.
-    Return only employee_name, age, gender, employee_id
+    Return only employee_name, age, gender, employee_id, barcode
     """
-
     # MongoDB connection
-
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     collection = db["core_employeeregistration"]
@@ -356,5 +361,276 @@ def get_all_employees(request):
                     "age": employee.get("age", ""),
                     "gender": employee.get("gender", ""),
                     "employee_id": employee.get("employee_id", ""),
+                    "barcode": str(billing.barcode) if hasattr(billing, "barcode") else "",
+                    "created_date": employee.get("created_date", "")
                 }
     return Response(list(employees_map.values()))
+
+
+@api_view(["GET"])
+def get_all_registered_employees(request):
+    employees = EmployeeRegistration.objects.all()
+    serializer = EmployeeRegistrationSerializer(employees, many=True)
+    return Response(serializer.data)
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from ..models import Ophthalmology
+from ..serializers import OphthalmologySerializer
+
+@api_view(['POST'])
+def save_Ophthalmology(request):
+    serializer = OphthalmologySerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response({"message": "Ophthalmology data saved successfully!"}, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from ..models import Investigation
+from ..serializers import InvestigationSerializer
+from pymongo import MongoClient
+
+@api_view(['GET'])
+def get_investigations(request):
+    """
+    Returns all Investigation records joined with employee_name from core_employeeregistration.
+    """
+    client = MongoClient(MONGO_URI)
+    db = client["Corporatehealthcheckup"]
+    employee_collection = db["core_employeeregistration"]
+    try:
+        investigations = Investigation.objects.all()
+        serializer = InvestigationSerializer(investigations, many=True)
+        enriched_data = []
+        for inv in serializer.data:
+            # Match employee_id instead of barcode
+            emp = employee_collection.find_one({"employee_id": inv["employee_id"]})
+            inv["employee_name"] = emp["employee_name"] if emp and "employee_name" in emp else "-"
+            enriched_data.append(inv)
+
+        return Response(enriched_data, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from ..models import Investigation
+@api_view(['PATCH'])
+def approve_investigation(request, barcode):
+    """
+    Approve a single investigation by barcode.
+    """
+    try:
+        record = Investigation.objects.get(barcode=barcode)
+        if record.status == "pending":
+            record.status = "approved"
+            record.save(update_fields=['status'])  # Only update the status field
+        return Response({"message": "Investigation approved successfully", "status": record.status}, status=status.HTTP_200_OK)
+    except Investigation.DoesNotExist:
+        return Response({"error": "Investigation not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+
+from django.http import HttpResponse, JsonResponse
+from rest_framework.decorators import api_view
+from rest_framework import status
+from pymongo import MongoClient
+import gridfs
+from bson.objectid import ObjectId
+import mimetypes
+import os
+# Connect to MongoDB
+client = MongoClient(MONGO_URI)
+db = client["Corporatehealthcheckup"]
+fs = gridfs.GridFS(db)
+@api_view(['GET'])
+def get_file(request, file_id):
+    """
+    Fetch a file from GridFS by file_id and return as HTTP response.
+    """
+    try:
+        file_obj = fs.get(ObjectId(file_id))
+        content_type, _ = mimetypes.guess_type(file_obj.filename)
+        response = HttpResponse(file_obj.read(), content_type=content_type or "application/octet-stream")
+        response['Content-Disposition'] = f'inline; filename="{file_obj.filename}"'
+        return response
+    except gridfs.NoFile:
+        return JsonResponse({"error": "File not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# ----------------------------
+# Get all Ophthalmology records + auto-approve pending
+# ----------------------------
+client = MongoClient(MONGO_URI)
+db = client["Corporatehealthcheckup"]
+fs = gridfs.GridFS(db)
+@api_view(['GET'])
+def get_ophthalmology(request):
+    """
+    Returns all Ophthalmology records joined with EmployeeRegistration data,
+    using barcode → Billing → employee_id as the link.
+    """
+    try:
+        client = MongoClient(MONGO_URI)
+        db = client["Corporatehealthcheckup"]
+        fs = gridfs.GridFS(db)
+        employee_collection = db["core_employeeregistration"]
+
+        ophthalmology = Ophthalmology.objects.all()
+        serializer = OphthalmologySerializer(ophthalmology, many=True)
+
+        enriched_data = []
+
+        for op in serializer.data:
+            barcode = op.get("barcode")
+            emp_data = None
+
+            # 🔹 Step 1: Find Billing record linked to this barcode
+            billing = Billing.objects.filter(barcode=barcode).order_by("-date").first()
+
+            # 🔹 Step 2: Find employee record in Mongo using employee_id
+            if billing:
+                emp = employee_collection.find_one({"employee_id": billing.employee_id})
+                if emp:
+                    emp_data = {
+                        "employee_name": emp.get("employee_name", "-"),
+                        "employee_id": emp.get("employee_id", "-"),
+                        "gender": emp.get("gender", "-"),
+                        "age": emp.get("age", "-"),
+                    }
+
+            # 🔹 Step 3: Fallbacks if employee not found
+            if not emp_data:
+                emp_data = {
+                    "employee_name": "-",
+                    "employee_id": "-",
+                    "gender": "-",
+                    "age": "-",
+                }
+
+            # 🔹 Step 4: Merge employee info into Ophthalmology record
+            op.update(emp_data)
+            op["date"] = op.get("date") or (billing.date if billing else None)
+
+            enriched_data.append(op)
+
+        return Response(enriched_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from ..models import Ophthalmology
+from ..serializers import OphthalmologySerializer
+@api_view(['PATCH'])
+def approve_ophthalmology(request, barcode):
+    """
+    Approve a single ophthalmology record by barcode.
+    Only updates the status field.
+    """
+    try:
+        record = Ophthalmology.objects.get(barcode=barcode)
+        if record.status == "pending":
+            record.status = "approved"
+            record.save(update_fields=['status'])  # Only update status
+        return Response({"message": "Ophthalmology approved successfully", "status": record.status}, status=status.HTTP_200_OK)
+    except Ophthalmology.DoesNotExist:
+        return Response({"error": "Ophthalmology record not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+
+import os
+import json
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+from pymongo import MongoClient
+import gridfs
+from ..models import Investigation
+from ..serializers import InvestigationSerializer
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import status
+from rest_framework.response import Response
+from pymongo import MongoClient
+import gridfs, json
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+def save_investigation(request):
+    data = dict(request.data)
+    # Convert single-value lists to plain values
+    for key, val in data.items():
+        if isinstance(val, list) and len(val) == 1:
+            data[key] = val[0]
+    # Get files
+    files_mapping = {
+        'xray_file': request.FILES.get('xray_file'),
+        'xrayfilm_file': request.FILES.get('xrayfilm_file'),  # fixed name
+        'ecg_file': request.FILES.get('ecg_file'),
+        'pft_file': request.FILES.get('pft_file'),
+        'audiometric_file': request.FILES.get('audiometric_file')
+    }
+    client = MongoClient(MONGO_URI)
+    db = client["Corporatehealthcheckup"]
+    fs = gridfs.GridFS(db)
+    try:
+        # Parse vitals JSON
+        raw_val = data.get('vitals')
+        if raw_val:
+            if isinstance(raw_val, str):
+                data['vitals'] = json.loads(raw_val)
+            elif not isinstance(raw_val, dict):
+                data['vitals'] = {}
+        # Save files to GridFS
+        for field, file_obj in files_mapping.items():
+            if file_obj:
+                file_id = fs.put(file_obj.read(), filename=file_obj.name, content_type=file_obj.content_type)
+                data[field] = str(file_id)
+        # Try to find an existing investigation by barcode
+        inv = Investigation.objects.filter(barcode=data.get('barcode')).first()
+        if inv:
+            # Update existing record
+            for key, value in data.items():
+                setattr(inv, key, value)
+            inv.save()
+            created = False
+        else:
+            # Create new record
+            inv = Investigation.objects.create(**data)
+            created = True
+        serializer = InvestigationSerializer(inv)
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=status_code)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    finally:
+        client.close()
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from ..models import Ophthalmology  # adjust model name
+@api_view(['GET'])
+def get_all_ophthalmology(request):
+    records = Ophthalmology.objects.all().values('barcode')
+    return Response(list(records))
+
+

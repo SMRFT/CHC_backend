@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-&31m(bx3%xc0lmm6k@+a(@-=wa)(e=+9w#6p$52)h%ui1x6)re
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["test.shinova.in"]
+ALLOWED_HOSTS = ["shinova.in"]
 
 
 # Application definition
@@ -117,6 +117,9 @@ CORS_ALLOW_HEADERS = [
     "Authorization",
     "Content-Type",
     "Branch-Code"
+]
+CORS_ALLOWED_ORIGINS = [
+    "https://chc.shinova.in",
 ]
 
 # Internationalization
