@@ -355,6 +355,7 @@ def save_investigation(request):
         client.close()
 
 
+
 from ..models import Billing
 @api_view(["GET"])
 def get_all_employees(request):
@@ -677,4 +678,5 @@ def get_ophthalmology_by_barcode(request, barcode):
         })
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+
 
