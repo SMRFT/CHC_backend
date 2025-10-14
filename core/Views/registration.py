@@ -295,8 +295,9 @@ def save_investigation(request):
             data[key] = val[0]
     # Get files
     files_mapping = {
-        'xray_file': request.FILES.get('xray_file'),
-        'xrayfilm_file': request.FILES.get('xrayfilm_file'),  # fixed name
+        'xray_notes':request.FILES.get('xray_notes'),
+        'xray_report':request.FILES.get('xray_report'),
+        'xrayfilm_file': request.FILES.get('xrayfilm_file'),
         'ecg_file': request.FILES.get('ecg_file'),
         'pft_file': request.FILES.get('pft_file'),
         'audiometric_file': request.FILES.get('audiometric_file')
@@ -660,3 +661,4 @@ def get_ophthalmology_by_barcode(request, barcode):
         })
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+
