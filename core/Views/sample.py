@@ -6,8 +6,9 @@ from django.utils import timezone
 from datetime import datetime
 import os
 import json
-
 import os
+from pymongo import MongoClient
+import certifi
 
 import re
 from collections import Counter
