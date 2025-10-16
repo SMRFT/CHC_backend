@@ -590,6 +590,22 @@ from rest_framework import status
 from rest_framework.response import Response
 from pymongo import MongoClient
 import gridfs, json
+import os
+import json
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+from pymongo import MongoClient
+import gridfs
+from ..models import Investigation
+from ..serializers import InvestigationSerializer
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import status
+from rest_framework.response import Response
+from pymongo import MongoClient
+import gridfs, json
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
 def save_investigation(request):
@@ -600,8 +616,9 @@ def save_investigation(request):
             data[key] = val[0]
     # Get files
     files_mapping = {
-        'xray_file': request.FILES.get('xray_file'),
-        'xrayfilm_file': request.FILES.get('xrayfilm_file'),  # fixed name
+        'xray_notes':request.FILES.get('xray_notes'),
+        'xray_report':request.FILES.get('xray_report'),
+        'xrayfilm_file': request.FILES.get('xrayfilm_file'),
         'ecg_file': request.FILES.get('ecg_file'),
         'pft_file': request.FILES.get('pft_file'),
         'audiometric_file': request.FILES.get('audiometric_file')
@@ -641,8 +658,6 @@ def save_investigation(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     finally:
         client.close()
-
-
 
 # views.py
 from rest_framework.decorators import api_view
