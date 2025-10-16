@@ -82,11 +82,12 @@ class Investigation(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=20, default="pending")
     patient_history = models.CharField(max_length=1200, blank=True, null=True)
+    xray_notes = models.CharField(max_length=5000, blank=True, null=True)
+    xray_report = models.CharField(max_length=5000, blank=True, null=True)
     ecg_notes = models.CharField(max_length=500, blank=True, null=True)
     pft_notes = models.CharField(max_length=500, blank=True, null=True)
     audiometry_notes = models.CharField(max_length=500, blank=True, null=True)
     # Files
-    xray_file = models.CharField(max_length=200, blank=True, null=True)
     xrayfilm_file = models.CharField(max_length=200, blank=True, null=True)
     ecg_file = models.CharField(max_length=200, blank=True, null=True)
     pft_file = models.CharField(max_length=200, blank=True, null=True)

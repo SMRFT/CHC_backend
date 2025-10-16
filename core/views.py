@@ -37,6 +37,8 @@ def get_investigations(request):
             'patient_history': inv.patient_history,
             'ecg_notes': inv.ecg_notes,
             'pft_notes': inv.pft_notes,
+            "xray_notes": inv.xray_notes,
+            'ecg_notes': inv.ecg_notes,
             'audiometry_notes': inv.audiometry_notes,
             'company_id': inv.company_id,
         })
