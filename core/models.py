@@ -26,7 +26,7 @@ class Package(AuditModel):
 
 
 class EmployeeRegistration(AuditModel):
-    company_id = models.CharField(max_length=20, default='CHC001')
+    company_id = models.CharField(max_length=20, default='CHC002')
     employee_name = models.CharField(max_length=100)
     employee_id = models.CharField(max_length=20)
     gender = models.CharField(max_length=10)
@@ -40,7 +40,7 @@ class EmployeeRegistration(AuditModel):
 
 
 class Billing(AuditModel):
-    company_id = models.CharField(max_length=20, default='CHC001')
+    company_id = models.CharField(max_length=20, default='CHC002')
     date = models.DateTimeField()
     employee_id = models.CharField(max_length=50)
     barcode = models.CharField(max_length=50)
@@ -53,7 +53,7 @@ class Billing(AuditModel):
 
 class Sample(AuditModel):
     date = models.DateTimeField(auto_now_add=True)
-    company_id = models.CharField(max_length=20, default='CHC001')
+    company_id = models.CharField(max_length=20, default='CHC002')
     barcode = models.CharField(primary_key=True, max_length=50)
     testdetails = models.JSONField(blank=True, null=True)
 
@@ -62,7 +62,7 @@ class Sample(AuditModel):
     
 
 class Batch(AuditModel):
-    company_id = models.CharField(max_length=20, default='CHC001')
+    company_id = models.CharField(max_length=20, default='CHC002')
     batch_number = models.CharField(max_length=20, unique=True)
     batch_details = models.JSONField(default=list)
     specimen_count = models.JSONField(default=list)
@@ -92,7 +92,7 @@ class Investigation(models.Model):
     ecg_file = models.CharField(max_length=200, blank=True, null=True)
     pft_file = models.CharField(max_length=200, blank=True, null=True)
     audiometric_file = models.CharField(max_length=200, blank=True, null=True)
-    company_id = models.CharField(max_length=10, default="CHC001")
+    company_id = models.CharField(max_length=10, default="CHC002")
     def __str__(self):
         return f"Investigation: {self.employee_id} ({self.created_at.date()})"
 
