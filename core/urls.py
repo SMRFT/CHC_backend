@@ -1,7 +1,7 @@
 #urls.py
 from django.urls import path
 from core import views
-from .Views import sample,package,registration,security
+from .Views import sample,package,registration,security, company
 
 urlpatterns = [
 
@@ -39,4 +39,9 @@ urlpatterns = [
     path('investigations/', views.get_investigations, name='get_investigations'),
     path('billings/', views.get_billings, name='get_billings'),
     path('dashboard-analytics/', views.get_dashboard_analytics, name='dashboard_analytics'),
+
+    # company
+    path("companies/", company.company_list_create, name="company_list_create"),
+    path("companies/next-id/", company.get_next_company_id, name="get_next_company_id"),
+    path("companies/<str:pk>/", company.company_detail, name="company_detail"),
 ]

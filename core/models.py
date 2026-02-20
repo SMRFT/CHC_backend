@@ -20,13 +20,15 @@ class Package(AuditModel):
     package_name = models.CharField(max_length=100, blank=True, null=True)
     investigations = models.JSONField(blank=True, null=True)
     totalAmount = models.CharField(max_length=100)
+    company_id = models.CharField(max_length=20, default='')
+    package_id = models.CharField(max_length=20, default='')
 
     def __str__(self):
         return f"Package: {self.package_name} - {self.totalAmount}"
 
 
 class EmployeeRegistration(AuditModel):
-    company_id = models.CharField(max_length=20, default='CHC002')
+    company_id = models.CharField(max_length=20, default='')
     employee_name = models.CharField(max_length=100)
     employee_id = models.CharField(max_length=20)
     gender = models.CharField(max_length=10)
@@ -40,7 +42,7 @@ class EmployeeRegistration(AuditModel):
 
 
 class Billing(AuditModel):
-    company_id = models.CharField(max_length=20, default='CHC002')
+    company_id = models.CharField(max_length=20, default='')
     date = models.DateTimeField()
     employee_id = models.CharField(max_length=50)
     barcode = models.CharField(max_length=50)
@@ -117,3 +119,21 @@ class Ophthalmology(models.Model):
         super().save(*args, **kwargs)
     def __str__(self):
         return f"Ophthalmology - {self.barcode}"
+
+class Company(models.Model):
+    company_id = models.CharField(max_length=20, primary_key=True)
+    company_name = models.CharField(max_length=100)
+    address = models.CharField(max_length=200,blank=True, null=True)
+    contact_number = models.CharField(max_length=20,blank=True, null=True)
+    contact_email = models.EmailField(max_length=200,blank=True, null=True)
+    industry = models.CharField(max_length=200,blank=True, null=True)
+    website = models.CharField(max_length=200,blank=True, null=True)
+    established_year = models.IntegerField(null=True, blank=True)
+    about = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "core_company"
+
+    def __str__(self):
+        return self.company_name

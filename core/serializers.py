@@ -83,3 +83,15 @@ class OphthalmologySerializer(serializers.ModelSerializer):
     class Meta:
         model = Ophthalmology
         fields = "__all__"
+
+# serializers.py
+
+from rest_framework import serializers
+from .models import Company
+
+
+class CompanySerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    class Meta:
+        model = Company
+        fields = "__all__"

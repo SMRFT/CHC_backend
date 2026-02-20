@@ -166,6 +166,7 @@ def register_employee_with_billing(request):
             "employee_id": data.get("employee_id"),
             "gender": data.get("gender"),
             "age": data.get("age"),
+            "company_id": data.get("company_id"),
             "company_name": data.get("company_name"),
             "department": data.get("department") or None,  # convert blank to None
             "email": data.get("email") or None,   # convert blank to None
@@ -183,6 +184,7 @@ def register_employee_with_billing(request):
         # --- Billing ---
         billing_payload = {
             "date": timezone.now(),
+            "company_id": data.get("company_id"),
             "employee_id": data.get("employee_id"),
             "barcode": data.get("barcode"),
             "testdetails": data.get("testdetails", []),  # pass list/dict directly
@@ -223,7 +225,12 @@ def get_packages(request):
         db = client["Corporatehealthcheckup"]
         collection = db["core_package"]
 
-        packages_cursor = collection.find({})
+        company_id = request.GET.get("company_id")
+        query = {}
+        if company_id:
+            query["company_id"] = company_id
+
+        packages_cursor = collection.find(query)
         packages = []
 
         for pkg in packages_cursor:
