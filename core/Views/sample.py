@@ -20,20 +20,26 @@ from ..serializers import BillingSerializer, SampleSerializer, BatchSerializer
 # -------------------------------
 @api_view(['GET'])
 def get_billing_patients(request):
-    date_str = request.GET.get('date')
+    from_date_str = request.GET.get('from_date') or request.GET.get('date')
+    to_date_str = request.GET.get('to_date')
     company_id = request.GET.get('company_id')
     employee_id = request.GET.get('employee_id')
     barcode = request.GET.get('barcode')
 
-    if not date_str or not company_id:
-        return Response({'error': 'date and company_id are required'}, status=400)
+    if not from_date_str or not company_id:
+        return Response({'error': 'from_date (or date) and company_id are required'}, status=400)
 
     try:
         billings = Billing.objects.all()
 
-        filter_date = datetime.strptime(date_str, '%Y-%m-%d')
-        start_of_day = datetime.combine(filter_date, datetime.min.time())
-        end_of_day = datetime.combine(filter_date, datetime.max.time())
+        from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+        start_of_day = datetime.combine(from_date, datetime.min.time())
+        
+        if to_date_str:
+            to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+        else:
+            to_date = from_date
+        end_of_day = datetime.combine(to_date, datetime.max.time())
 
         billings = billings.filter(
             date__gte=start_of_day,
@@ -109,19 +115,29 @@ def sample_management(request):
     if request.method == 'GET':
         company_id = request.GET.get('company_id')
         barcode = request.GET.get('barcode')
-        date_str = request.GET.get('date')
+        from_date_str = request.GET.get('from_date') or request.GET.get('date')
+        to_date_str = request.GET.get('to_date')
         employee_id = request.GET.get('employee_id')
         sample_status = request.GET.get('samplestatus', 'Collected')
 
         # Validate required parameters
-        if not date_str or not company_id:
-            return Response({'error': 'date and company_id are required'}, status=400)
+        missing_params = []
+        if not from_date_str: missing_params.append('from_date (or date)')
+        if not company_id: missing_params.append('company_id')
+        
+        if missing_params:
+            return Response({'error': f'The following parameters are required: {", ".join(missing_params)}'}, status=400)
 
         try:
-            # Parse date for filtering
-            filter_date = datetime.strptime(date_str, '%Y-%m-%d')
-            start_of_day = datetime.combine(filter_date, datetime.min.time())
-            end_of_day = datetime.combine(filter_date, datetime.max.time())
+            # Parse dates for filtering
+            from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+            start_of_day = datetime.combine(from_date, datetime.min.time())
+            
+            if to_date_str:
+                to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+            else:
+                to_date = from_date
+            end_of_day = datetime.combine(to_date, datetime.max.time())
 
             # MongoDB connection
             client = MongoClient(os.getenv('GLOBAL_DB_HOST'))
@@ -231,15 +247,22 @@ def sample_management(request):
                 pass
 
     elif request.method == 'POST':
-        # Create or update sample collection with required date, company_id, barcode
-        date_str = request.data.get('date')
+        # Parse dates from request data
+        from_date_str = request.data.get('from_date') or request.data.get('date')
+        to_date_str = request.data.get('to_date')
         company_id = request.data.get('company_id')
         barcode = request.data.get('barcode')
         incoming_testdetails = request.data.get('testdetails', [])
         collected_by = request.data.get('collected_by', 'system')
 
-        if not date_str or not company_id or not barcode:
-            return Response({"error": "date, company_id and barcode are required"}, status=400)
+        # Validate required parameters
+        missing_params = []
+        if not from_date_str: missing_params.append('from_date (or date)')
+        if not company_id: missing_params.append('company_id')
+        if not barcode: missing_params.append('barcode')
+        
+        if missing_params:
+            return Response({"error": f"The following fields are required in the body: {', '.join(missing_params)}"}, status=400)
 
         if not isinstance(incoming_testdetails, list):
             return Response({"error": "testdetails must be a list of objects"}, status=400)
@@ -255,33 +278,31 @@ def sample_management(request):
 
         try:
             with transaction.atomic():
-                # Parse date for filtering
-                filter_date = datetime.strptime(date_str, '%Y-%m-%d')
-                start_of_day = datetime.combine(filter_date, datetime.min.time())
-                end_of_day = datetime.combine(filter_date, datetime.max.time())
+                # Parse dates for filtering range
+                from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+                start_of_day = datetime.combine(from_date, datetime.min.time())
+                
+                if to_date_str:
+                    to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+                else:
+                    to_date = from_date
+                end_of_day = datetime.combine(to_date, datetime.max.time())
                 
                 if timezone.is_aware(timezone.now()):
                     start_of_day = timezone.make_aware(start_of_day)
                     end_of_day = timezone.make_aware(end_of_day)
 
-                # Get billing record with date, company_id, and barcode
+                # Get billing record with barcode and company_id (date range check removed for robustness)
                 billing = Billing.objects.filter(
                     barcode=barcode,
-                    company_id=company_id,
-                    date__gte=start_of_day,
-                    date__lte=end_of_day
-                ).first()
+                    company_id=company_id
+                ).order_by('-date').first()
                 
                 if not billing:
                     return Response({"error": "Billing record not found for the given date, company_id and barcode"}, status=404)
 
-                # Check if sample already exists
-                existing_sample = Sample.objects.filter(
-                    barcode=barcode,
-                    company_id=company_id,
-                    created_date__gte=start_of_day,
-                    created_date__lte=end_of_day
-                ).first()
+                # Check if sample already exists by barcode (PK)
+                existing_sample = Sample.objects.filter(barcode=barcode).first()
                 
                 if existing_sample:
                     # Update existing sample with new test statuses
@@ -393,31 +414,35 @@ def sample_management(request):
             return Response({"error": str(e)}, status=500)
 
     elif request.method == 'PATCH':
-        date_str = request.data.get('date')
+        from_date_str = request.data.get('from_date') or request.data.get('date')
+        to_date_str = request.data.get('to_date')
         company_id = request.data.get('company_id')
         barcode = request.data.get('barcode')
         incoming_tests = request.data.get('testdetails', [])
         transferred_by = request.data.get('transferred_by', 'system')
 
-        if not date_str or not company_id or not barcode:
-            return Response({"error": "date, company_id and barcode are required"}, status=400)
+        if not from_date_str or not company_id or not barcode:
+            return Response({"error": "from_date, company_id and barcode are required"}, status=400)
 
         valid_tests = [t for t in incoming_tests if isinstance(t, dict) and t.get('test_id')]
         if not valid_tests:
             return Response({"error": "No valid tests with test_id found"}, status=400)
 
         try:
-            filter_date = datetime.strptime(date_str, '%Y-%m-%d')
-            start = datetime.combine(filter_date, datetime.min.time())
-            end = datetime.combine(filter_date, datetime.max.time())
+            from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+            start = datetime.combine(from_date, datetime.min.time())
+            
+            if to_date_str:
+                to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+            else:
+                to_date = from_date
+            end = datetime.combine(to_date, datetime.max.time())
             if timezone.is_aware(timezone.now()):
                 start = timezone.make_aware(start)
                 end = timezone.make_aware(end)
 
-            sample = Sample.objects.filter(
-                barcode=barcode, company_id=company_id,
-                created_date__gte=start, created_date__lte=end
-            ).first()
+            # Find sample by barcode (PK)
+            sample = Sample.objects.filter(barcode=barcode).first()
             if not sample:
                 return Response({"error": "Sample not found"}, status=404)
 
@@ -448,6 +473,7 @@ def sample_management(request):
         except Exception as e:
             return Response({"error": str(e)}, status=500)
         
+        
 
 from datetime import datetime, timedelta
 
@@ -455,17 +481,23 @@ from datetime import datetime, timedelta
 def get_transferred_samples(request):
     """Get transferred samples for batch generation"""
     employee_id = request.GET.get('employee_id')
-    date_param = request.GET.get('date')
+    from_date_str = request.GET.get('from_date') or request.GET.get('date')
+    to_date_str = request.GET.get('to_date')
 
     try:
         samples = Sample.objects.all()
 
-        # Optional date filtering
-        if date_param:
+        # Optional date range filtering
+        if from_date_str:
             try:
-                filter_date = datetime.strptime(date_param, '%Y-%m-%d')
-                start_of_day = datetime.combine(filter_date, datetime.min.time())
-                end_of_day = datetime.combine(filter_date, datetime.max.time())
+                from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+                start_of_day = datetime.combine(from_date, datetime.min.time())
+                
+                if to_date_str:
+                    to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+                else:
+                    to_date = from_date
+                end_of_day = datetime.combine(to_date, datetime.max.time())
 
                 samples = samples.filter(
                     lastmodified_date__gte=start_of_day,

@@ -8,6 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 import logging
 import traceback
 import os
+from datetime import datetime
 from pymongo import MongoClient
 import certifi
 
@@ -160,6 +161,12 @@ def register_employee_with_billing(request):
     try:
         data = request.data
 
+        registration_mode = data.get("registration_mode", "Onsite")
+        barcode = data.get("barcode")
+
+        # Removed auto-generation logic here. 
+        # Frontend provides the barcode (either scanned or pre-fetched via get_next_offsite_barcode).
+
         # --- EmployeeRegistration ---
         employee_payload = {
             "employee_name": data.get("employee_name") ,
@@ -186,10 +193,12 @@ def register_employee_with_billing(request):
             "date": timezone.now(),
             "company_id": data.get("company_id"),
             "employee_id": data.get("employee_id"),
-            "barcode": data.get("barcode"),
+            "barcode": barcode,
             "testdetails": data.get("testdetails", []),  # pass list/dict directly
             "netAmount": data.get("totalAmount", 0),
-            "paymentMode": data.get("paymentMode", "Credit")  # or default
+            "paymentMode": data.get("payment_mode", "Credit"),
+            "transaction_id": data.get("transaction_id", ""),  # or default
+            "mode": registration_mode
         }
 
 
@@ -204,7 +213,7 @@ def register_employee_with_billing(request):
 
         return Response({
             "status": "success",
-            "message": "Employee and Billing saved successfully",
+            "message": f"Employee and Billing saved successfully ({registration_mode} Mode)",
             "employee": EmployeeRegistrationSerializer(employee_obj).data,
             "billing": BillingSerializer(billing_obj).data
         }, status=status.HTTP_201_CREATED)
@@ -212,6 +221,151 @@ def register_employee_with_billing(request):
     except Exception as e:
         return Response({"status": "error", "message": str(e)},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_next_offsite_barcode(request):
+    """
+    Find the next sequential 6-digit barcode for Offsite mode.
+    """
+    try:
+        # Fetch all Offsite billings and find the max numeric barcode in Python
+        # to avoid database-specific regex issues.
+        offsite_billings = Billing.objects.filter(mode="Offsite")
+        
+        numeric_barcodes = []
+        for b in offsite_billings:
+            bc = str(b.barcode)
+            if bc.isdigit() and len(bc) == 6:
+                numeric_barcodes.append(int(bc))
+        
+        if numeric_barcodes:
+            max_val = max(numeric_barcodes)
+            barcode = str(max_val + 1).zfill(6)
+        else:
+            barcode = "000001"
+        
+        return Response({
+            "status": "success",
+            "barcode": barcode
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error in get_next_offsite_barcode: {str(e)}\n{traceback.format_exc()}")
+        return Response({
+            "status": "error", 
+            "message": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+def get_offsite_billings(request):
+    """
+    Fetch billing records where mode is 'Offsite', joined with employee details.
+    """
+    try:
+        from_date = request.data.get('from_date')
+        to_date = request.data.get('to_date')
+        search = request.data.get('search', '').lower()
+
+        # Build initial query for Billing
+        billing_query = Billing.objects.filter(mode="Offsite").order_by("-date")
+
+        if from_date:
+            billing_query = billing_query.filter(date__gte=from_date)
+        if to_date:
+            # Fix date format: remove extra space and T
+            billing_query = billing_query.filter(date__lte=to_date + " 23:59:59")
+
+        client = MongoClient(MONGO_URI)
+        db = client["Corporatehealthcheckup"]
+        emp_collection = db["core_employeeregistration"]
+
+        results = []
+        for billing in billing_query:
+            emp = emp_collection.find_one({"employee_id": billing.employee_id})
+            
+            # Formatting data for the table
+            record = {
+                "billing_id": str(billing.id),
+                "employee_id": billing.employee_id,
+                "barcode": billing.barcode,
+                "employee_name": emp.get("employee_name", "-") if emp else "-",
+                "gender": emp.get("gender", "-") if emp else "-",
+                "age": emp.get("age", "-") if emp else "-",
+                "department": emp.get("department", "-") if emp else "-",
+                "date": billing.date,
+                "testdetails": billing.testdetails,
+                "netAmount": float(str(billing.netAmount)) if billing.netAmount else 0,
+                "paymentMode": billing.paymentMode,
+            }
+
+            # Search filter (Name, ID, Barcode, Dept)
+            if search:
+                if (search in record["employee_name"].lower() or 
+                    search in str(record["employee_id"]).lower() or 
+                    search in str(record["barcode"]).lower() or 
+                    search in record["department"].lower()):
+                    results.append(record)
+            else:
+                results.append(record)
+
+        return Response({"status": "success", "data": results}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error in get_offsite_billings: {str(e)}\n{traceback.format_exc()}")
+        return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+def get_test_details(request):
+    """
+    Fetch test container by test_id from Diagnostics database.
+    """
+    try:
+        test_ids = request.data.get("test_ids", [])
+        if not test_ids:
+            return Response({"status": "success", "data": []}, status=status.HTTP_200_OK)
+
+        client = MongoClient(MONGO_URI)
+        db = client["Diagnostics"]
+        collection = db["core_testdetails"]
+
+        # Find tests by test_id
+        # test_ids might be strings or ints, handle both
+        query_ids = []
+        for tid in test_ids:
+            try:
+                query_ids.append(int(tid))
+            except:
+                query_ids.append(tid)
+
+        tests_cursor = collection.find({"test_id": {"$in": query_ids}})
+        test_map = {}
+        for test in tests_cursor:
+            test_map[test.get("test_id")] = {
+                "test_id": test.get("test_id"),
+                "test_name": test.get("test_name"),
+                "collection_container": test.get("collection_container", "-")
+            }
+
+        # Ensure we return them in the order requested or at least structured
+        results = []
+        for tid in test_ids:
+            try:
+                lookup_id = int(tid)
+            except:
+                lookup_id = tid
+                
+            if lookup_id in test_map:
+                results.append(test_map[lookup_id])
+            else:
+                # Fallback for tests not found in core_testdetails
+                results.append({
+                    "test_id": tid,
+                    "test_name": "Unknown",
+                    "collection_container": "N/A"
+                })
+
+        return Response({"status": "success", "data": results}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error in get_test_details: {str(e)}\n{traceback.format_exc()}")
+        return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 from pymongo import MongoClient
 from rest_framework.decorators import api_view
@@ -374,7 +528,31 @@ def get_all_employees(request):
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     collection = db["core_employeeregistration"]
-    billings = Billing.objects.all()
+
+    from_date_str = request.GET.get('from_date')
+    to_date_str = request.GET.get('to_date')
+
+    billings = Billing.objects.all().order_by('-date')
+
+    if from_date_str:
+        try:
+            from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+            start_of_day = datetime.combine(from_date, datetime.min.time())
+            
+            if to_date_str:
+                to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+            else:
+                to_date = from_date
+            end_of_day = datetime.combine(to_date, datetime.max.time())
+
+            if timezone.is_aware(timezone.now()):
+                start_of_day = timezone.make_aware(start_of_day)
+                end_of_day = timezone.make_aware(end_of_day)
+
+            billings = billings.filter(date__gte=start_of_day, date__lte=end_of_day)
+        except ValueError:
+            pass
+    
     employees_map = {}
     for billing in billings:
         emp_id = str(billing.employee_id)
@@ -431,8 +609,31 @@ def get_investigations(request):
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     employee_collection = db["core_employeeregistration"]
+    from_date_str = request.GET.get('from_date')
+    to_date_str = request.GET.get('to_date')
+
     try:
-        investigations = Investigation.objects.all()
+        investigations = Investigation.objects.all().order_by('-date')
+
+        if from_date_str:
+            try:
+                from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+                start_of_day = datetime.combine(from_date, datetime.min.time())
+                
+                if to_date_str:
+                    to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+                else:
+                    to_date = from_date
+                end_of_day = datetime.combine(to_date, datetime.max.time())
+
+                if timezone.is_aware(timezone.now()):
+                    start_of_day = timezone.make_aware(start_of_day)
+                    end_of_day = timezone.make_aware(end_of_day)
+
+                investigations = investigations.filter(date__gte=start_of_day, date__lte=end_of_day)
+            except ValueError:
+                pass
+
         serializer = InvestigationSerializer(investigations, many=True)
         enriched_data = []
         for inv in serializer.data:
@@ -512,7 +713,30 @@ def get_ophthalmology(request):
         fs = gridfs.GridFS(db)
         employee_collection = db["core_employeeregistration"]
 
-        ophthalmology = Ophthalmology.objects.all()
+        from_date_str = request.GET.get('from_date')
+        to_date_str = request.GET.get('to_date')
+
+        ophthalmology = Ophthalmology.objects.all().order_by('-date')
+
+        if from_date_str:
+            try:
+                from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+                start_of_day = datetime.combine(from_date, datetime.min.time())
+                
+                if to_date_str:
+                    to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+                else:
+                    to_date = from_date
+                end_of_day = datetime.combine(to_date, datetime.max.time())
+
+                if timezone.is_aware(timezone.now()):
+                    start_of_day = timezone.make_aware(start_of_day)
+                    end_of_day = timezone.make_aware(end_of_day)
+
+                ophthalmology = ophthalmology.filter(date__gte=start_of_day, date__lte=end_of_day)
+            except ValueError:
+                pass
+
         serializer = OphthalmologySerializer(ophthalmology, many=True)
 
         enriched_data = []
@@ -678,11 +902,35 @@ from rest_framework.response import Response
 from ..models import Ophthalmology
 @api_view(['GET'])
 def get_all_ophthalmology(request):
-    approved_records = Ophthalmology.objects.filter(status='approved').values('barcode', 'status')
-    pending_records = Ophthalmology.objects.filter(status='pending').values('barcode', 'status')
+    from_date_str = request.GET.get('from_date')
+    to_date_str = request.GET.get('to_date')
+
+    approved_records = Ophthalmology.objects.filter(status='approved').order_by('-date')
+    pending_records = Ophthalmology.objects.filter(status='pending').order_by('-date')
+
+    if from_date_str:
+        try:
+            from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+            start_of_day = datetime.combine(from_date, datetime.min.time())
+            
+            if to_date_str:
+                to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+            else:
+                to_date = from_date
+            end_of_day = datetime.combine(to_date, datetime.max.time())
+
+            if timezone.is_aware(timezone.now()):
+                start_of_day = timezone.make_aware(start_of_day)
+                end_of_day = timezone.make_aware(end_of_day)
+
+            approved_records = approved_records.filter(date__gte=start_of_day, date__lte=end_of_day)
+            pending_records = pending_records.filter(date__gte=start_of_day, date__lte=end_of_day)
+        except ValueError:
+            pass
+
     return Response({
-        "approved": list(approved_records),
-        "pending": list(pending_records),
+        "approved": list(approved_records.values('barcode', 'status')),
+        "pending": list(pending_records.values('barcode', 'status')),
     })
 @api_view(['GET'])
 def get_ophthalmology_by_barcode(request, barcode):

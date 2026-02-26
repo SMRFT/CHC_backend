@@ -44,11 +44,13 @@ class EmployeeRegistration(AuditModel):
 class Billing(AuditModel):
     company_id = models.CharField(max_length=20, default='')
     date = models.DateTimeField()
+    mode = models.CharField(max_length=200, default="Onsite")
     employee_id = models.CharField(max_length=50)
     barcode = models.CharField(max_length=50)
     testdetails = models.JSONField(default=list)
     netAmount = models.DecimalField(max_digits=10, decimal_places=2)
     paymentMode = models.CharField(max_length=50,default="Credit")
+    transaction_id = models.CharField(max_length=50,blank=True, null=True)
     def __str__(self):
         return f"Billing({self.employee_id} - {self.barcode})" 
 
@@ -128,7 +130,7 @@ class Company(models.Model):
     contact_email = models.EmailField(max_length=200,blank=True, null=True)
     industry = models.CharField(max_length=200,blank=True, null=True)
     website = models.CharField(max_length=200,blank=True, null=True)
-    established_year = models.IntegerField(null=True, blank=True)
+    established_year = models.CharField(max_length=200,blank=True, null=True)
     about = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
 
