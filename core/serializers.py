@@ -42,11 +42,18 @@ class EmployeeRegistrationSerializer(serializers.ModelSerializer):
         fields = '__all__'  # includes all + barcode
 
     def get_barcode(self, obj):
-        billing = Billing.objects.filter(employee_id=obj.employee_id).order_by("-date").first()
-        return billing.barcode if billing else None
+        # 1. Try local field first (as we're making it primary/stored)
+        if hasattr(obj, 'barcode') and obj.barcode:
+            return obj.barcode
 
+        # 2. Fallback to Billing lookup for historical records
+        if hasattr(obj, 'employee_id') and obj.employee_id:
+            billing = Billing.objects.filter(employee_id=obj.employee_id).order_by("-date").first()
+            if billing:
+                return billing.barcode
 
-
+        return None
+            
 from .models import Billing
 class BillingSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
@@ -77,9 +84,20 @@ class InvestigationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Investigation
         fields = "__all__"
+
+# serializers.py
+
 from rest_framework import serializers
-from .models import Ophthalmology
-class OphthalmologySerializer(serializers.ModelSerializer):
+from .models import Company, CHCtest
+
+
+class CompanySerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
     class Meta:
-        model = Ophthalmology
+        model = Company
+        fields = "__all__"
+
+class CHCtestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CHCtest
         fields = "__all__"
