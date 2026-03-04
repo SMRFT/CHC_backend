@@ -7,70 +7,134 @@ import os
 import logging
 from django.utils import timezone
 import json
-from ..serializers import PackageSerializer
-from ..models import Company
+from ..serializers import PackageSerializer, CHCtestSerializer
+from ..models import Company, CHCtest
 from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# MongoDB config
-MONGO_URI = os.getenv("GLOBAL_DB_HOST")
-client = MongoClient(MONGO_URI)
+def get_mongodb_collections():
+    load_dotenv()
+    uri = os.getenv("GLOBAL_DB_HOST")
+    db_name = os.getenv("CHC_DB_NAME")
+    
+    client = MongoClient(uri)
+    diagnostics_db = client["Diagnostics"]
+    chc_db = client[db_name]
+    storetrust_db = client["StoreTrust"]
+    
+    return {
+        "client": client,
+        "core_test": diagnostics_db["core_testdetails"],
+        "core_chctest": chc_db["core_chctest"],
+        "core_package": chc_db["core_package"],
+        "package_billing": storetrust_db["patient_billing"]
+    }
 
-# MongoDB databases & collections
-diagnostics_db = client["Diagnostics"]
-core_test_collection = diagnostics_db["core_testdetails"]
+@api_view(['GET'])
+def get_next_chc_test_id(request):
+    mongo = get_mongodb_collections()
+    try:
+        # Sort by test_id descending to find the highest value
+        last_test = mongo["core_chctest"].find_one(sort=[("test_id", -1)])
+        
+        if not last_test:
+            return Response({"test_id": "CHCT001"})
+        
+        last_id = last_test.get("test_id")
+        
+        # Handle string (like "CHCT001" or "000001") or integer
+        if isinstance(last_id, int):
+            new_id_num = last_id + 1
+        elif isinstance(last_id, str):
+            import re
+            nums = re.findall(r'\d+', last_id)
+            if nums:
+                new_id_num = int(nums[-1]) + 1
+            else:
+                new_id_num = 1
+        else:
+            new_id_num = 1
+            
+        new_id_str = f"CHCT{new_id_num:03d}"
+        return Response({"test_id": new_id_str})
+        
+    except Exception as e:
+        logger.error(f"Error in get_next_chc_test_id: {str(e)}")
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        mongo["client"].close()
 
-# Use StoreTrust DB, collection patient_billing
-CHC_DB = os.getenv("CHC_DB_NAME")
-CHC_DB = client[CHC_DB]
-storetrust_db = client["StoreTrust"]
-package_billing_collection = storetrust_db["patient_billing"]
-core_package_collection = CHC_DB["core_package"]
+@api_view(['POST'])
+def create_chc_test(request):
+    data = request.data.copy()
+    # Save test_id as it is (string with CHCT prefix)
+    serializer = CHCtestSerializer(data=data)
+    if serializer.is_valid():
+        mongo = get_mongodb_collections()
+        try:
+            # Bypassing ORM save to avoid djongo DatabaseError
+            mongo["core_chctest"].insert_one(serializer.validated_data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            mongo["client"].close()
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+import traceback
 
 @csrf_exempt
 @api_view(['GET'])
 def get_core_test(request):
     """
     Fetch all test names along with MRP and L2L Rate from Diagnostics.core_test MongoDB collection
+    AND from CHCtest Django model.
     """
+    mongo = get_mongodb_collections()
     try:
-        tests = list(core_test_collection.find({}, {"test_name": 1, "MRP": 1, "L2L_Rate_Card": 1, "test_id": 1, "_id": 0}))
+        # Fetch from MongoDB
+        mongo_tests = list(mongo["core_test"].find({}, {"test_name": 1, "MRP": 1, "L2L_Rate_Card": 1, "test_id": 1, "_id": 0}))
         test_list = [
             {
                 "name": t.get("test_name", ""),
                 "MRP": t.get("MRP", 0),
                 "L2L_Rate_Card": t.get("L2L_Rate_Card", 0),
-                "test_id": t.get("test_id", None)
+                "test_id": str(t.get("test_id", ""))
             }
-            for t in tests if t.get("test_name")
+            for t in mongo_tests if t.get("test_name")
         ]
+        
+        # Fetch from Django CHCtest (Bypassing ORM to avoid djongo DatabaseError)
+        chc_tests = list(mongo["core_chctest"].find({"is_active": True}))
+        for t in chc_tests:
+            test_list.append({
+                "name": t.get("test_name", ""),
+                "MRP": t.get("test_price", 0),
+                "L2L_Rate_Card": t.get("test_price", 0),
+                "test_id": t.get("test_id", ""),
+                "notes": t.get("notes", ""),
+                "report": t.get("report", ""),
+                "is_chc": True
+            })
+
         return Response({"status": "success", "tests": test_list}, status=status.HTTP_200_OK)
 
     except Exception as e:
-        logger.error(f"Error in get_core_test: {str(e)}")
-        return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from rest_framework import status
-from django.views.decorators.csrf import csrf_exempt
-from django.utils import timezone
-from bson import ObjectId
-import json
-import logging
-
-logger = logging.getLogger(__name__)
+        logger.error(f"Error in get_core_test: {str(e)}\n{traceback.format_exc()}")
+        return Response({"status": "error", "message": f"{str(e)} - {traceback.format_exc()}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        mongo["client"].close()
 
 @csrf_exempt
 @api_view(['GET', 'POST'])
 def create_package(request):
-
-    # ==========================
-    # ✅ POST - Create Package
-    # ==========================
-    if request.method == "POST":
-        try:
+    mongo = get_mongodb_collections()
+    try:
+        # ==========================
+        # ✅ POST - Create Package
+        # ==========================
+        if request.method == "POST":
             data = request.data
 
             package_name = data.get("package_name")
@@ -99,16 +163,16 @@ def create_package(request):
             seen_ids = set()
 
             for test in investigations:
-                test_id = str(test.get("test_id"))
-                if test_id not in seen_ids:
-                    seen_ids.add(test_id)
+                test_id_raw = str(test.get("test_id"))
+                if test_id_raw not in seen_ids:
+                    seen_ids.add(test_id_raw)
                     unique_tests.append({
                         "testname": test.get("testname") or test.get("testnameme"),
-                        "test_id": int(test_id)
+                        "test_id": test_id_raw
                     })
 
             # ✅ Generate Package ID (PCK000X)
-            last_package = core_package_collection.find_one(
+            last_package = mongo["core_package"].find_one(
                 sort=[("package_id", -1)]
             )
 
@@ -135,7 +199,7 @@ def create_package(request):
                 "totalAmount": total_amount
             }
 
-            result = core_package_collection.insert_one(mongo_data)
+            result = mongo["core_package"].insert_one(mongo_data)
             mongo_data["_id"] = str(result.inserted_id)
 
             return Response({
@@ -144,18 +208,10 @@ def create_package(request):
                 "data": mongo_data
             }, status=status.HTTP_201_CREATED)
 
-        except Exception as e:
-            logger.error(f"Error in package POST: {str(e)}")
-            return Response({
-                "status": "error",
-                "message": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    # ==========================
-    # ✅ GET - List Packages
-    # ==========================
-    if request.method == "GET":
-        try:
+        # ==========================
+        # ✅ GET - List Packages
+        # ==========================
+        if request.method == "GET":
             company_id = request.GET.get("company_id")
 
             query = {}
@@ -163,7 +219,7 @@ def create_package(request):
                 query["company_id"] = company_id
 
             packages = []
-            for pkg in core_package_collection.find(query):
+            for pkg in mongo["core_package"].find(query):
                 pkg["_id"] = str(pkg["_id"])
                 packages.append(pkg)
 
@@ -173,9 +229,11 @@ def create_package(request):
                 "data": packages
             }, status=status.HTTP_200_OK)
 
-        except Exception as e:
-            logger.error(f"Error in package GET: {str(e)}")
-            return Response({
-                "status": "error",
-                "message": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        logger.error(f"Error in package view: {str(e)}\n{traceback.format_exc()}")
+        return Response({
+            "status": "error",
+            "message": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        mongo["client"].close()
