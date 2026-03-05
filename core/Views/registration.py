@@ -326,9 +326,20 @@ def get_offsite_billings(request):
         for billing in billing_query:
             emp = emp_collection.find_one({"employee_id": billing.employee_id})
             
+            # Robust JSON handling for test details
+            test_details = billing.testdetails or []
+            if isinstance(test_details, str):
+                try: test_details = json.loads(test_details)
+                except: test_details = []
+            
+            chc_test_details = getattr(billing, 'chctestdetails', [])
+            if isinstance(chc_test_details, str):
+                try: chc_test_details = json.loads(chc_test_details)
+                except: chc_test_details = []
+
             # Formatting data for the table
             record = {
-                "billing_id": str(billing.id),
+                "billing_id": str(billing.pk or "NoID"),
                 "employee_id": billing.employee_id,
                 "barcode": billing.barcode,
                 "employee_name": emp.get("employee_name", "-") if emp else "-",
@@ -336,9 +347,12 @@ def get_offsite_billings(request):
                 "age": emp.get("age", "-") if emp else "-",
                 "department": emp.get("department", "-") if emp else "-",
                 "date": billing.date,
-                "testdetails": billing.testdetails,
+                "testdetails": test_details,
+                "chctestdetails": chc_test_details,
+                "package_name": (emp.get("package_name") or emp.get("package") or "-") if emp else "-",
                 "netAmount": float(str(billing.netAmount)) if billing.netAmount else 0,
                 "paymentMode": billing.paymentMode,
+                "api_version": "v3_json_parsed" 
             }
 
             # Search filter (Name, ID, Barcode, Dept)
