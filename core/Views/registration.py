@@ -608,10 +608,15 @@ def get_investigations(request):
         
         data = []
         for inv in cursor:
-            # Match employee_name
+            # Match full employee details from registration
             emp_id = inv.get("employee_id")
             emp = employee_collection.find_one({"employee_id": emp_id})
+            
             emp_name = emp.get("employee_name", "-") if emp else "-"
+            gender = emp.get("gender", "-") if emp else "-"
+            age = emp.get("age", "-") if emp else "-"
+            department = emp.get("department", "-") if emp else "-"
+            company_id = inv.get("company_id") or (emp.get("company_id") if emp else "CHC002")
             
             # Robust JSON handling
             vitals = inv.get('vitals', {})
@@ -628,15 +633,16 @@ def get_investigations(request):
                 'employee_id': emp_id,
                 'employee_name': emp_name,
                 'vitals': vitals,
-                'gender': inv.get('gender'),
-                'age': inv.get('age'),
+                'gender': gender,
+                'age': age,
+                'department': department,
                 'barcode': inv.get('barcode'),
                 'date': inv.get('date'),
                 'status': inv.get('status', 'pending'),
                 'patient_history': inv.get('patient_history', ''),
                 'test_results': test_results,
-                'visual_acuity': inv.get('visual_acuity', {}),
-                'company_id': inv.get('company_id'),
+                'visual_acuity': inv.get('visual_acuity') or inv.get('CHCT001', {}),
+                'company_id': company_id,
             })
 
         return Response(data, status=status.HTTP_200_OK)
@@ -873,17 +879,22 @@ def save_investigation(request):
         final_results = []
         for t in test_results:
             cleaned = get_cleaned_test_data(t)
-            if not cleaned: continue
-            
-            tid_str = str(cleaned.get("test_id", "")).strip()
-            # Convert numeric IDs to int
-            try:
-                if not tid_str.upper().startswith("CHCT"):
-                    cleaned["test_id"] = int(tid_str)
-            except (ValueError, TypeError):
-                pass
-            
-            final_results.append(cleaned)
+            if cleaned:
+                # Sync visual_acuity to CHCT001 results if it matches
+                tid_sync = str(cleaned.get("test_id", "")).strip().upper()
+                if tid_sync == "CHCT001" and va_data:
+                    cleaned["results"] = cleaned.get("results", {}) or {}
+                    cleaned["results"]["visual_acuity"] = va_data
+                
+                tid_str = str(cleaned.get("test_id", "")).strip()
+                # Convert numeric IDs to int
+                try:
+                    if not tid_str.upper().startswith("CHCT"):
+                        cleaned["test_id"] = int(tid_str)
+                except (ValueError, TypeError):
+                    pass
+                
+                final_results.append(cleaned)
 
         # 5. Save or Update using PyMongo for native BSON storage
         barcode = data.get('barcode')
@@ -893,13 +904,13 @@ def save_investigation(request):
         update_doc = {
             "employee_id": data.get('employee_id'),
             "vitals": data.get('vitals', {}),
-            "gender": data.get('gender'),
-            "age": data.get('age'),
+            # "gender": data.get('gender'),
+            # "age": data.get('age'),
             "status": data.get('status', 'pending'),
             "patient_history": data.get('patient_history', ''),
             "test_results": final_results,
-            "visual_acuity": va_data,
-            "company_id": data.get('company_id', 'CHC002')
+            "CHCT001": va_data,
+            # "company_id": data.get('company_id', 'CHC002')
         }
 
         # Use update_one with upsert=True to handle both create and update
@@ -992,18 +1003,18 @@ def sync_investigations_from_billing(request):
         client.close()
 
 @api_view(['GET'])
-def get_all_ophthalmology(request):
-    """Fetch all records with Ophthalmology test, using PyMongo."""
+def get_ophthalmology(request):
+    """Fetch all records with Ophthalmology test, returning full data, using PyMongo."""
     from_date_str = request.GET.get('from_date')
     to_date_str = request.GET.get('to_date')
 
     client = MongoClient(MONGO_URI)
     db = client[DB_NAME]
     investigation_collection = db["core_investigation"]
+    employee_collection = db["core_employeeregistration"]
 
     try:
-        query = {"test_results": {"$exists": True, "$ne": None}}
-        
+        query = {}
         if from_date_str:
             try:
                 fd = datetime.strptime(from_date_str, '%Y-%m-%d')
@@ -1016,16 +1027,15 @@ def get_all_ophthalmology(request):
                     "$lte": datetime.combine(td, datetime.max.time())
                 }
             except Exception as date_err:
-                logger.warning(f"Date error in get_all_ophthalmology: {date_err}")
+                logger.warning(f"Date error in get_ophthalmology: {date_err}")
 
         # Fetch records
-        cursor = investigation_collection.find(query)
+        cursor = investigation_collection.find(query).sort("date", -1)
         
-        approved_list = []
-        pending_list = []
+        results = []
 
         for inv in cursor:
-            # Check if any test in test_results is Ophthalmology and has some data
+            # Check if has visual_acuity or OPHTHALMOLOGY test
             test_results = inv.get("test_results", [])
             if isinstance(test_results, str):
                 try: test_results = json.loads(test_results)
@@ -1036,18 +1046,29 @@ def get_all_ophthalmology(request):
                 for t in test_results
             )
             
-            if has_optho:
-                status_val = inv.get("status", "pending")
-                entry = {"barcode": inv.get("barcode"), "status": status_val}
-                if status_val == "approved":
-                    approved_list.append(entry)
-                else:
-                    pending_list.append(entry)
+            if has_optho or inv.get("visual_acuity"):
+                emp_id = inv.get("employee_id")
+                emp = employee_collection.find_one({"employee_id": emp_id})
+                emp_name = emp.get("employee_name", "-") if emp else "-"
+                gender = emp.get("gender", "-") if emp else "-"
+                age = emp.get("age", "-") if emp else "-"
 
-        return Response({
-            "approved": approved_list,
-            "pending": pending_list,
-        })
+                results.append({
+                    'barcode': inv.get('barcode'),
+                    'employee_id': emp_id,
+                    'employee_name': emp_name,
+                    'gender': gender,
+                    'age': age,
+                    'date': inv.get('date'),
+                    'status': inv.get('status', 'pending'),
+                    'visual_acuity': inv.get('visual_acuity', {}),
+                    'patient_history': inv.get('patient_history', '')
+                })
+
+        return Response(results, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error in get_ophthalmology: {str(e)}")
+        return Response({"error": str(e)}, status=500)
     finally:
         client.close()
 
@@ -1063,6 +1084,11 @@ def get_investigation_by_barcode(request, barcode):
         if not record:
             return Response({"message": "Not found"}, status=404)
         
+        # Fetch matching employee registration for full details
+        emp_id = record.get("employee_id")
+        employee_collection = db["core_employeeregistration"]
+        emp = employee_collection.find_one({"employee_id": emp_id})
+
         # Robust JSON handling
         vitals = record.get('vitals', {})
         if isinstance(vitals, str):
@@ -1074,9 +1100,13 @@ def get_investigation_by_barcode(request, barcode):
             try: test_results = json.loads(test_results)
             except: test_results = []
             
+        record["employee_name"] = emp.get("employee_name", "-") if emp else "-"
+        record["gender"] = emp.get("gender", "-") if emp else "-"
+        record["age"] = emp.get("age", "-") if emp else "-"
+        record["department"] = emp.get("department", "-") if emp else "-"
         record["vitals"] = vitals
         record["test_results"] = test_results
-        record["visual_acuity"] = record.get("visual_acuity", {})
+        record["visual_acuity"] = record.get("visual_acuity") or record.get("CHCT001", {})
         record["_id"] = str(record["_id"])
         if record.get("date"):
             record["date"] = record["date"].isoformat()

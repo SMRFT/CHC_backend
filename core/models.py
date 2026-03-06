@@ -82,8 +82,8 @@ class Batch(AuditModel):
 class Investigation(models.Model):
     employee_id = models.CharField(max_length=50)
     vitals = models.JSONField()  # height, weight, bmi, bp, spo2
-    gender = models.CharField(max_length=10)
-    age = models.IntegerField()
+    # gender = models.CharField(max_length=10)
+    # age = models.IntegerField()
     barcode = models.CharField(max_length=50, primary_key=True)
     date = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=20, default="pending")
@@ -94,7 +94,7 @@ class Investigation(models.Model):
     
     # Example structure: [ { "test_id": "...", "test_name": "...", "results": {...}, "files": [...], "notes": "..." } ]
     
-    company_id = models.CharField(max_length=10, default="CHC002")
+    # company_id = models.CharField(max_length=10, default="CHC002")
 
     def __str__(self):
         return f"Investigation: {self.employee_id} ({self.date})"

@@ -34,7 +34,7 @@ urlpatterns = [
     path("get_test_details/", registration.get_test_details, name="get_test_details"),
     path('registration/', security.registration, name='registration'),
     path('login/', security.login, name='login'),
-    path('get_all_ophthalmology/', registration.get_all_ophthalmology),
+    path('get_ophthalmology/', registration.get_ophthalmology),
     path("get_investigation_by_barcode/<str:barcode>/", registration.get_investigation_by_barcode, name="get_investigation_by_barcode"),
     path("sync_investigations/", registration.sync_investigations_from_billing, name="sync_investigations"),
     # Dashboard Analyticss
