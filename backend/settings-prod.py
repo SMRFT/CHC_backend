@@ -85,11 +85,12 @@ import certifi
 DATABASES = {
     'default': {
         'ENGINE': 'djongo',
-        'NAME': "Corporatehealthcheckup",
+        'NAME': os.getenv("CHC_DB_NAME","Corporatehealthcheckup"),
         'ENFORCE_SCHEMA': False,
         'CLIENT': {
 
             'host': os.getenv("GLOBAL_DB_HOST"),
+
 
         }
     }
