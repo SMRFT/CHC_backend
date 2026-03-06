@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def get_mongodb_collections():
     load_dotenv()
     uri = os.getenv("GLOBAL_DB_HOST")
-    db_name = os.getenv("CHC_DB_NAME")
+    db_name = os.getenv("CHC_DB_NAME","Corporatehealthcheckup")
     
     client = MongoClient(uri)
     diagnostics_db = client["Diagnostics"]
