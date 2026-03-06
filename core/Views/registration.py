@@ -635,6 +635,7 @@ def get_investigations(request):
                 'status': inv.get('status', 'pending'),
                 'patient_history': inv.get('patient_history', ''),
                 'test_results': test_results,
+                'visual_acuity': inv.get('visual_acuity', {}),
                 'company_id': inv.get('company_id'),
             })
 
@@ -800,6 +801,16 @@ def save_investigation(request):
         if isinstance(test_results, str):
             test_results = json.loads(test_results)
         
+        # 3. Specialized handling for Ophthalmology if stored within test_results
+        va_data = data.get('visual_acuity', {})
+        if not va_data:
+            for t in test_results:
+                if str(t.get("test_id", "")).strip().upper() == "CHCT001":
+                    results = t.get("results", {})
+                    if isinstance(results, dict) and "visual_acuity" in results:
+                        va_data = results["visual_acuity"]
+                    break
+        
         # Helper to get file ID
         def get_file_id(field_name):
             file_obj = request.FILES.get(field_name)
@@ -887,6 +898,7 @@ def save_investigation(request):
             "status": data.get('status', 'pending'),
             "patient_history": data.get('patient_history', ''),
             "test_results": final_results,
+            "visual_acuity": va_data,
             "company_id": data.get('company_id', 'CHC002')
         }
 
@@ -1064,6 +1076,7 @@ def get_investigation_by_barcode(request, barcode):
             
         record["vitals"] = vitals
         record["test_results"] = test_results
+        record["visual_acuity"] = record.get("visual_acuity", {})
         record["_id"] = str(record["_id"])
         if record.get("date"):
             record["date"] = record["date"].isoformat()

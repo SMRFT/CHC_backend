@@ -87,44 +87,56 @@ import traceback
 @csrf_exempt
 @api_view(['GET'])
 def get_core_test(request):
-    """
-    Fetch all test names along with MRP and L2L Rate from Diagnostics.core_test MongoDB collection
-    AND from CHCtest Django model.
-    """
+
     mongo = get_mongodb_collections()
+    
+    client = mongo["client"]
+    diagnostics_db = client["Diagnostics"]
+
     try:
-        # Fetch from MongoDB
-        mongo_tests = list(mongo["core_test"].find({}, {"test_name": 1, "MRP": 1, "L2L_Rate_Card": 1, "test_id": 1, "_id": 0}))
-        test_list = [
-            {
-                "name": t.get("test_name", ""),
-                "MRP": t.get("MRP", 0),
-                "L2L_Rate_Card": t.get("L2L_Rate_Card", 0),
-                "test_id": str(t.get("test_id", ""))
-            }
-            for t in mongo_tests if t.get("test_name")
-        ]
-        
-        # Fetch from Django CHCtest (Bypassing ORM to avoid djongo DatabaseError)
-        chc_tests = list(mongo["core_chctest"].find({"is_active": True}))
+        test_list = []
+
+        mongo_tests = diagnostics_db["core_testdetails"].find(
+            {},
+            {"test_name": 1, "MRP": 1, "L2L_Rate_Card": 1, "test_id": 1, "_id": 0}
+        )
+
+        for t in mongo_tests:
+            if t.get("test_name"):
+                test_list.append({
+                    "name": t.get("test_name"),
+                    "MRP": t.get("MRP", 0),
+                    "L2L_Rate_Card": t.get("L2L_Rate_Card", 0),
+                    "test_id": str(t.get("test_id"))
+                })
+
+        chc_tests = mongo["core_chctest"].find({"is_active": True})
+
         for t in chc_tests:
             test_list.append({
-                "name": t.get("test_name", ""),
+                "name": t.get("test_name"),
                 "MRP": t.get("test_price", 0),
                 "L2L_Rate_Card": t.get("test_price", 0),
-                "test_id": t.get("test_id", ""),
+                "test_id": str(t.get("test_id")),
                 "notes": t.get("notes", ""),
                 "report": t.get("report", ""),
                 "is_chc": True
             })
 
-        return Response({"status": "success", "tests": test_list}, status=status.HTTP_200_OK)
+        return Response({
+            "status": "success",
+            "tests": test_list
+        }, status=status.HTTP_200_OK)
 
     except Exception as e:
-        logger.error(f"Error in get_core_test: {str(e)}\n{traceback.format_exc()}")
-        return Response({"status": "error", "message": f"{str(e)} - {traceback.format_exc()}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        logger.error(str(e))
+        return Response({
+            "status": "error",
+            "message": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     finally:
-        mongo["client"].close()
+        client.close()
 
 @csrf_exempt
 @api_view(['GET', 'POST'])
