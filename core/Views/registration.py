@@ -503,19 +503,28 @@ def get_all_employees(request):
             billings = billings.filter(date__gte=start_of_day, date__lte=end_of_day)
         except ValueError:
             pass
-    
     employees_map = {}
+    company_cache = {}
     for billing in billings:
         emp_id = str(billing.employee_id)
         if emp_id not in employees_map:
             employee = collection.find_one({"employee_id": emp_id})
             if employee:
+                c_id = employee.get("company_id", "")
+                c_name = employee.get("company_name", "")
+                if not c_name or c_name == "-":
+                    if c_id not in company_cache:
+                        comp_obj = Company.objects.filter(company_id=c_id).first()
+                        company_cache[c_id] = comp_obj.company_name if comp_obj else "-"
+                    c_name = company_cache[c_id]
+
                 employees_map[emp_id] = {
                     "employee_name": employee.get("employee_name", ""),
                     "age": employee.get("age", ""),
                     "gender": employee.get("gender", ""),
                     "employee_id": employee.get("employee_id", ""),
                     "barcode": str(billing.barcode) if hasattr(billing, "barcode") else "",
+                    "company_name": c_name,
                     "created_date": employee.get("created_date", ""),
                     "billing_testdetails": []
                 }
@@ -607,6 +616,7 @@ def get_investigations(request):
         cursor = investigation_collection.find(query).sort("date", -1)
         
         data = []
+        company_cache = {}
         for inv in cursor:
             # Match full employee details from registration
             emp_id = inv.get("employee_id")
@@ -618,6 +628,14 @@ def get_investigations(request):
             department = emp.get("department", "-") if emp else "-"
             company_id = inv.get("company_id") or (emp.get("company_id") if emp else "CHC002")
             
+            # Get company name
+            company_name = emp.get("company_name") if emp else None
+            if not company_name or company_name == "-":
+                if company_id not in company_cache:
+                    comp_obj = Company.objects.filter(company_id=company_id).first()
+                    company_cache[company_id] = comp_obj.company_name if comp_obj else "-"
+                company_name = company_cache[company_id]
+
             # Robust JSON handling
             vitals = inv.get('vitals', {})
             if isinstance(vitals, str):
@@ -643,6 +661,7 @@ def get_investigations(request):
                 'test_results': test_results,
                 'visual_acuity': inv.get('visual_acuity') or inv.get('CHCT001', {}),
                 'company_id': company_id,
+                'company_name': company_name,
             })
 
         return Response(data, status=status.HTTP_200_OK)
