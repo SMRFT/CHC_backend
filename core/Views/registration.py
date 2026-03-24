@@ -234,6 +234,9 @@ def register_employee_with_billing(request):
                     pass
                 standard_tests.append(t)
 
+        payment_mode = data.get("payment_mode", "Credit")
+        paid_at = timezone.now() if payment_mode == "Cash" else None
+
         billing_payload = {
             "date": timezone.now(),
             "company_id": company_id,
@@ -242,8 +245,9 @@ def register_employee_with_billing(request):
             "testdetails": standard_tests,
             "chctestdetails": chct_tests,
             "netAmount": data.get("totalAmount", 0),
-            "paymentMode": data.get("payment_mode", "Credit"),
+            "paymentMode": payment_mode,
             "transaction_id": data.get("transaction_id", ""),
+            "paid_at": paid_at,
             "mode": registration_mode
         }
 
