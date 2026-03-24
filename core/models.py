@@ -47,10 +47,11 @@ class Billing(AuditModel):
     date = models.DateTimeField()
     mode = models.CharField(max_length=200, default="Onsite")
     employee_id = models.CharField(max_length=50)
-    barcode = models.CharField(max_length=50)
+    barcode = models.CharField(max_length=50, primary_key=True)
     testdetails = models.JSONField(default=list)
     chctestdetails = models.JSONField(default=list)
     netAmount = models.DecimalField(max_digits=10, decimal_places=2)
+    paid_at = models.DateTimeField(blank=True, null=True)
     paymentMode = models.CharField(max_length=50,default="Credit")
     transaction_id = models.CharField(max_length=50,blank=True, null=True)
     def __str__(self):
