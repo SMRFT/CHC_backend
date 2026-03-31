@@ -174,6 +174,7 @@ def payment_report(request):
                 "id": str(bill.pk),
                 "date": bill.date,
                 "paid_at": bill.paid_at or "-" ,
+                "payment_method": bill.paymentMode or "-",
                 "employee_id": bill.employee_id,
                 "barcode": bill.barcode,
                 "employee_name": emp.get("employee_name", "-") if emp else "-",

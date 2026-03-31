@@ -32,6 +32,9 @@ urlpatterns = [
     path("get_next_offsite_barcode/", registration.get_next_offsite_barcode, name="get_next_offsite_barcode"),
     path("get_offsite_billings/", registration.get_offsite_billings, name="get_offsite_billings"),
     path("get_test_details/", registration.get_test_details, name="get_test_details"),
+    path("get_unregistered_employees/", registration.get_unregistered_employees, name="get_unregistered_employees"),
+    path("get_employee_types/", registration.get_unique_employee_types, name="get_employee_types"),
+    path("create_employee_type/", registration.create_employee_type, name="create_employee_type"),
     path('registration/', security.registration, name='registration'),
     path('login/', security.login, name='login'),
     path('get_ophthalmology/', registration.get_ophthalmology),
@@ -46,6 +49,7 @@ urlpatterns = [
     # company
     path("companies/", company.company_list_create, name="company_list_create"),
     path("companies/next-id/", company.get_next_company_id, name="get_next_company_id"),
+    path("companies/<str:company_id>/toggle/", company.toggle_company_status, name="toggle_company_status"),
     path("companies/<str:pk>/", company.company_detail, name="company_detail"),
 
     # billing

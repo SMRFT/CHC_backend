@@ -67,9 +67,9 @@ def get_billing_patients(request):
     employee_id   = request.GET.get("employee_id")
     barcode       = request.GET.get("barcode")
 
-    if not from_date_str or not company_id:
+    if not from_date_str:
         return Response(
-            {"error": "from_date (or date) and company_id are required"}, status=400
+            {"error": "from_date (or date) is required"}, status=400
         )
 
     try:
@@ -81,8 +81,9 @@ def get_billing_patients(request):
         billings = Billing.objects.filter(
             date__gte=start_of_day,
             date__lte=end_of_day,
-            company_id=company_id,
         )
+        if company_id and company_id != 'all' and company_id != '':
+            billings = billings.filter(company_id=company_id)
         if employee_id:
             billings = billings.filter(employee_id__icontains=employee_id)
         if barcode:
@@ -104,12 +105,8 @@ def get_billing_patients(request):
                 continue
 
             # Build set of test_ids already past Pending
-            existing_sample = Sample.objects.filter(
-                barcode=billing.barcode,
-                company_id=company_id,
-                created_date__gte=start_of_day,
-                created_date__lte=end_of_day,
-            ).first()
+            # Look up if a sample record ALREADY exists for this barcode
+            existing_sample = Sample.objects.filter(barcode=billing.barcode).first()
 
             already_processed = set()
             if existing_sample and existing_sample.testdetails:
@@ -119,7 +116,9 @@ def get_billing_patients(request):
                     else json.loads(existing_sample.testdetails)
                 )
                 for st in sample_tests:
-                    if st.get("samplestatus") in ("Collected", "Transferred", "Received"):
+                    # Exclude any test that has been processed beyond "Pending"
+                    # Only "Pending" or missing statuses are shown in the collection list
+                    if st.get("samplestatus") and st.get("samplestatus") != "Pending":
                         already_processed.add(st.get("test_id"))
 
             pending_tests = [t for t in valid_tests if t["test_id"] not in already_processed]
@@ -135,11 +134,17 @@ def get_billing_patients(request):
             billing_dict["pending_test_count"] = len(pending_tests)
 
             try:
-                emp = EmployeeRegistration.objects.get(employee_id=billing.employee_id)
-                billing_dict["employee_name"] = emp.employee_name
-                billing_dict["age"]           = emp.age
-                billing_dict["gender"]        = emp.gender
-                billing_dict["department"]    = emp.department
+                emp = EmployeeRegistration.objects.filter(barcode=billing.barcode).first()
+                if not emp and billing.employee_id:
+                    emp = EmployeeRegistration.objects.filter(employee_id=billing.employee_id, company_id=billing.company_id).first()
+                    
+                if emp:
+                    billing_dict["employee_name"] = emp.employee_name
+                    billing_dict["age"]           = emp.age
+                    billing_dict["gender"]        = emp.gender
+                    billing_dict["department"]    = emp.department
+                else:
+                    raise EmployeeRegistration.DoesNotExist
             except EmployeeRegistration.DoesNotExist:
                 billing_dict.update({
                     "employee_name": "Unknown",
@@ -147,6 +152,15 @@ def get_billing_patients(request):
                     "gender":        "Unknown",
                     "department":    "Unknown",
                 })
+
+            # --- Get Company Name ---
+            c_id = billing.company_id
+            c_name = "-"
+            if c_id:
+                from ..models import Company
+                comp_obj = Company.objects.filter(company_id=c_id).first()
+                c_name = comp_obj.company_name if comp_obj else "-"
+            billing_dict["company_name"] = c_name
 
             billing_data.append(billing_dict)
 
@@ -177,7 +191,6 @@ def sample_management(request):
 
         missing = []
         if not from_date_str: missing.append("from_date (or date)")
-        if not company_id:    missing.append("company_id")
         if missing:
             return Response({"error": f"Required: {', '.join(missing)}"}, status=400)
 
@@ -192,9 +205,10 @@ def sample_management(request):
             collection = db.core_sample
 
             mongo_filter = {
-                "company_id":   company_id,
                 "created_date": {"$gte": start_of_day, "$lte": end_of_day},
             }
+            if company_id and company_id != 'all' and company_id != '':
+                mongo_filter["company_id"] = company_id
             if barcode:     mongo_filter["barcode"]     = barcode
             if employee_id: mongo_filter["employee_id"] = employee_id
 
@@ -231,21 +245,34 @@ def sample_management(request):
 
                     if not sample_employee_id and sample_barcode:
                         billing = Billing.objects.filter(
-                            barcode=sample_barcode, company_id=company_id
+                            barcode=sample_barcode, company_id=sample.get("company_id")
                         ).order_by("-date").first()
                         if billing:
                             sample_employee_id = billing.employee_id
 
-                    if sample_employee_id:
+                    if sample_employee_id or sample_barcode:
                         try:
-                            emp = EmployeeRegistration.objects.get(employee_id=sample_employee_id)
-                            employee_info = {
-                                "employee_id":   emp.employee_id,
-                                "employee_name": emp.employee_name or "Unknown",
-                                "age":           emp.age,
-                                "gender":        emp.gender or "Unknown",
-                                "department":    emp.department or "Unknown",
-                            }
+                            # Try lookup by barcode (PK) first
+                            emp = EmployeeRegistration.objects.filter(barcode=sample_barcode).first()
+                            
+                            # Fallback to employee_id if barcode didn't yield a result
+                            if not emp and sample_employee_id:
+                                # Scope it to the sample's company_id
+                                emp = EmployeeRegistration.objects.filter(
+                                    employee_id=sample_employee_id, 
+                                    company_id=sample.get("company_id")
+                                ).first()
+
+                            if emp:
+                                employee_info = {
+                                    "employee_id":   emp.employee_id,
+                                    "employee_name": emp.employee_name or "Unknown",
+                                    "age":           emp.age,
+                                    "gender":        emp.gender or "Unknown",
+                                    "department":    emp.department or "Unknown",
+                                }
+                            else:
+                                raise EmployeeRegistration.DoesNotExist
                         except EmployeeRegistration.DoesNotExist:
                             employee_info["employee_id"] = sample_employee_id
 
@@ -262,7 +289,15 @@ def sample_management(request):
                         "age":            employee_info["age"],
                         "gender":         employee_info["gender"],
                         "department":     employee_info["department"],
+                        "company_name":   "-" # Default
                     })
+
+                    # Resolve company name for sample_management
+                    c_id = sample.get("company_id")
+                    if c_id:
+                        from ..models import Company
+                        comp_obj = Company.objects.filter(company_id=c_id).first()
+                        sample_data[-1]["company_name"] = comp_obj.company_name if comp_obj else "-"
 
                 except Exception as e:
                     print(f"Error processing sample {sample.get('_id')}: {e}")
@@ -514,7 +549,7 @@ def get_transferred_samples(request):
         samples = Sample.objects.all()
 
         # ── Company filter ─────────────────────────────────────────────────
-        if company_id:
+        if company_id and company_id != 'all' and company_id != '':
             samples = samples.filter(company_id=company_id)
 
         # ── Date filter ────────────────────────────────────────────────────
@@ -637,7 +672,16 @@ def get_transferred_samples(request):
                 "testdetails":      enriched_tests,
                 "transferred_date": sample.lastmodified_date,
                 "transferred_by":   sample.lastmodified_by,
+                "company_id":       sample.company_id,
+                "company_name":     "-"
             })
+
+            # Resolve company name for transferred samples
+            c_id = sample.company_id
+            if c_id:
+                from ..models import Company
+                comp_obj = Company.objects.filter(company_id=c_id).first()
+                transferred_samples[-1]["company_name"] = comp_obj.company_name if comp_obj else "-"
 
         return Response({"transferred_samples": transferred_samples})
 

@@ -2,15 +2,15 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
-from ..models import EmployeeRegistration, Billing, Investigation, CHCtest, Company
-from ..serializers import EmployeeRegistrationSerializer, InvestigationSerializer
+from ..models import EmployeeRegistration, Billing, Investigation, CHCtest, Company, unregisteredEmployee, EmployeeType
+from ..serializers import EmployeeRegistrationSerializer, InvestigationSerializer, unregisteredEmployeeSerializer
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 import logging
 import traceback
 import os
 import json
-from datetime import datetime
+from datetime import datetime, time
 from pymongo import MongoClient
 import certifi
 
@@ -202,6 +202,10 @@ def register_employee_with_billing(request):
             "employee_id": employee_id,
             "gender": data.get("gender"),
             "age": data.get("age"),
+            "dob": data.get("dob") or None,
+            "doj": data.get("doj") or None,
+            "designation": data.get("designation") or None,
+            "employee_type": data.get("employee_type") or None,
             "company_id": company_id,
             "company_name": company_name,
             "department": data.get("department") or None,
@@ -569,9 +573,44 @@ def get_all_employees(request):
 
 @api_view(["GET"])
 def get_all_registered_employees(request):
-    employees = EmployeeRegistration.objects.all()
-    serializer = EmployeeRegistrationSerializer(employees, many=True)
-    return Response(serializer.data)
+    """
+    Fetch all registered employees with optional filters for company and date range.
+    """
+    try:
+        from_date = request.GET.get('from_date')
+        to_date = request.GET.get('to_date')
+        company_id = request.GET.get('company_id')
+
+        employees = EmployeeRegistration.objects.all().order_by('-created_date')
+
+        if company_id and company_id != 'all' and company_id != '':
+            employees = employees.filter(company_id=company_id)
+
+        if from_date:
+            try:
+                dt_from = datetime.strptime(from_date, '%Y-%m-%d')
+                start_of_day = datetime.combine(dt_from, time.min)
+                if timezone.is_aware(timezone.now()):
+                    start_of_day = timezone.make_aware(start_of_day)
+                employees = employees.filter(created_date__gte=start_of_day)
+            except Exception as e:
+                logger.warning(f"From date parse error: {e}")
+        
+        if to_date:
+            try:
+                dt_to = datetime.strptime(to_date, '%Y-%m-%d')
+                end_of_day = datetime.combine(dt_to, time.max)
+                if timezone.is_aware(timezone.now()):
+                    end_of_day = timezone.make_aware(end_of_day)
+                employees = employees.filter(created_date__lte=end_of_day)
+            except Exception as e:
+                logger.warning(f"To date parse error: {e}")
+
+        serializer = EmployeeRegistrationSerializer(employees, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error in get_all_registered_employees: {str(e)}")
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
@@ -1143,3 +1182,65 @@ def get_investigation_by_barcode(request, barcode):
 
 
 
+
+from ..models import unregisteredEmployee
+from ..serializers import unregisteredEmployeeSerializer
+
+@api_view(['GET'])
+def get_unregistered_employees(request):
+    """
+    Fetch all unregistered employees or search by name/id.
+    """
+    try:
+        search = request.GET.get('search', '').lower()
+        company_id = request.GET.get('company_id')
+
+        employees = unregisteredEmployee.objects.all()
+
+        if company_id:
+            employees = employees.filter(company_id=company_id)
+
+        if search:
+            from django.db.models import Q
+            employees = employees.filter(
+                Q(employee_id__icontains=search) | 
+                Q(employee_name__icontains=search)
+            )
+
+        serializer = unregisteredEmployeeSerializer(employees, many=True)
+        return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error in get_unregistered_employees: {str(e)}")
+        return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_unique_employee_types(request):
+    try:
+        # Combine unique employee types from triple sources: New model, unregistered, and final registrations
+        types1 = set(unregisteredEmployee.objects.values_list('employee_type', flat=True).distinct())
+        types2 = set(EmployeeRegistration.objects.values_list('employee_type', flat=True).distinct())
+        types3 = set(EmployeeType.objects.values_list('name', flat=True).distinct())
+        
+        # Merge, filter, and sort
+        combined_all = types1.union(types2).union(types3)
+        final_types = sorted([str(t).strip() for t in combined_all if t and str(t).strip()])
+        
+        return Response({"status": "success", "data": final_types}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+def create_employee_type(request):
+    try:
+        new_name = request.data.get('name', '').strip()
+        if not new_name:
+            return Response({"status": "error", "message": "Type name is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create new entry in formal model
+        if not EmployeeType.objects.filter(name__iexact=new_name).exists():
+            EmployeeType.objects.create(name=new_name)
+            return Response({"status": "success", "message": "Employee Type created"}, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"status": "error", "message": "Employee Type already exists"}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
