@@ -33,7 +33,11 @@ def get_next_company_id(request):
 @api_view(["GET", "POST"])
 def company_list_create(request):
     if request.method == "GET":
-        companies = Company.objects.all()
+        managed = request.GET.get("managed", "false").lower() == "true"
+        if managed:
+            companies = Company.objects.all().order_by("-company_id")
+        else:
+            companies = Company.objects.filter(is_active__in=[True]).order_by("-company_id")
         serializer = CompanySerializer(companies, many=True)
         return Response(serializer.data)
 
@@ -70,3 +74,16 @@ def company_detail(request, pk):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PATCH'])
+def toggle_company_status(request, company_id):
+    try:
+        company = Company.objects.get(company_id=company_id)
+        # We look for is_active in the request data
+        serializer = CompanySerializer(company, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    except Company.DoesNotExist:
+        return Response({"error": "Company not found"}, status=status.HTTP_404_NOT_FOUND)

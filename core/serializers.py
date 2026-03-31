@@ -35,11 +35,22 @@ class PackageSerializer(serializers.ModelSerializer):
 from .models import EmployeeRegistration
 class EmployeeRegistrationSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
-    barcode = serializers.SerializerMethodField()  # single CharField, not list
+    barcode = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeRegistration
-        fields = '__all__'  # includes all + barcode
+        fields = '__all__'
+
+    def get_company_name(self, obj):
+        try:
+            if hasattr(obj, 'company_id') and obj.company_id:
+                from .models import Company
+                comp = Company.objects.filter(company_id=obj.company_id).first()
+                return comp.company_name if comp else "-"
+            return "-"
+        except:
+            return "-"
 
     def get_barcode(self, obj):
         # 1. Try local field first (as we're making it primary/stored)
@@ -100,4 +111,11 @@ class CompanySerializer(serializers.ModelSerializer):
 class CHCtestSerializer(serializers.ModelSerializer):
     class Meta:
         model = CHCtest
+        fields = "__all__"
+
+from .models import unregisteredEmployee
+class unregisteredEmployeeSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    class Meta:
+        model = unregisteredEmployee
         fields = "__all__"

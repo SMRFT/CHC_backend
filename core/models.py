@@ -31,12 +31,16 @@ class EmployeeRegistration(AuditModel):
     company_id = models.CharField(max_length=20, default='')
     barcode = models.CharField(max_length=20, primary_key=True)
     employee_name = models.CharField(max_length=100)
-    employee_id = models.CharField(max_length=20,blank=True, null=True)
+    employee_id = models.CharField(unique=True,max_length=20)
     gender = models.CharField(max_length=10)
     age = models.IntegerField()
+    dob = models.DateField(blank=True, null=True)
+    designation = models.CharField(max_length=100, blank=True, null=True)
+    employee_type = models.CharField(max_length=100, blank=True, null=True)
     department = models.CharField(max_length=200, blank=True, null=True)
     email = models.EmailField(max_length=200, blank=True, null=True)
     mobile = models.CharField(max_length=200, blank=True, null=True)
+    doj = models.DateField(blank=True, null=True)
 
     def __str__(self):
         return f"{self.employee_id} ({self.barcode})"
@@ -47,7 +51,7 @@ class Billing(AuditModel):
     date = models.DateTimeField()
     mode = models.CharField(max_length=200, default="Onsite")
     employee_id = models.CharField(max_length=50)
-    barcode = models.CharField(max_length=50, primary_key=True)
+    barcode = models.CharField(max_length=50, primary_key=True) 
     testdetails = models.JSONField(default=list)
     chctestdetails = models.JSONField(default=list)
     netAmount = models.DecimalField(max_digits=10, decimal_places=2)
@@ -130,3 +134,27 @@ class Company(models.Model):
 
     def __str__(self):
         return self.company_name
+
+class unregisteredEmployee(models.Model):
+    employee_name = models.CharField(max_length=100)
+    employee_id = models.CharField(primary_key=True, max_length=20)
+    gender = models.CharField(max_length=10)
+    dob = models.DateField(blank=True, null=True)
+    doj = models.DateField(blank=True, null=True)
+    age = models.IntegerField()
+    department = models.CharField(max_length=200, blank=True, null=True)
+    company_name = models.CharField(max_length=100)
+    company_id = models.CharField(max_length=20)
+    designation = models.CharField(max_length=100, blank=True, null=True)
+    employee_type = models.CharField(max_length=100, blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.employee_id} ({self.employee_name})"
+
+class EmployeeType(models.Model):
+    name = models.CharField(max_length=100, unique=True, primary_key=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return self.name
+        
