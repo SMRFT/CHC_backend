@@ -204,6 +204,7 @@ def register_employee_with_billing(request):
             "age": data.get("age"),
             "dob": data.get("dob") or None,
             "doj": data.get("doj") or None,
+            "experience": data.get("experience") or None,
             "designation": data.get("designation") or None,
             "employee_type": data.get("employee_type") or None,
             "company_id": company_id,
@@ -246,6 +247,7 @@ def register_employee_with_billing(request):
             "company_id": company_id,
             "employee_id": employee_id,
             "barcode": barcode,
+            "package_id": data.get("package_id", ""),
             "testdetails": standard_tests,
             "chctestdetails": chct_tests,
             "netAmount": data.get("totalAmount", 0),
@@ -543,7 +545,7 @@ def get_all_employees(request):
                 
                 # Handle potential JSON strings
                 if isinstance(merged_billing_tests, str):
-                    try: merged_billing_tests = json.loads(merged_billing_tests)
+                    try: merged_billing_tests = json.loads(merged_billing_tests) if isinstance(merged_billing_tests, str) else (merged_billing_tests or [])
                     except: merged_billing_tests = []
                 
                 enriched_tests = []
@@ -682,7 +684,7 @@ def get_investigations(request):
             # Robust JSON handling
             vitals = inv.get('vitals', {})
             if isinstance(vitals, str):
-                try: vitals = json.loads(vitals)
+                try: vitals = json.loads(vitals) if isinstance(vitals, str) else (vitals or {})
                 except: vitals = {}
                 
             test_results = inv.get('test_results', [])
@@ -867,7 +869,10 @@ def save_investigation(request):
         # We'll store everything in search results
         test_results = data.get('test_results', [])
         if isinstance(test_results, str):
-            test_results = json.loads(test_results)
+            try:
+                test_results = json.loads(test_results)
+            except:
+                test_results = []
         
         # 3. Specialized handling for Ophthalmology if stored within test_results
         va_data = data.get('visual_acuity', {})

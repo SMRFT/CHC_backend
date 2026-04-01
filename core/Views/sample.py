@@ -95,11 +95,14 @@ def get_billing_patients(request):
             if not billing.testdetails:
                 continue
 
-            all_tests = (
-                billing.testdetails
-                if isinstance(billing.testdetails, list)
-                else json.loads(billing.testdetails)
-            )
+            all_tests = billing.testdetails
+            if isinstance(all_tests, str):
+                try:
+                    all_tests = json.loads(all_tests) if isinstance(all_tests, str) else (all_tests or [])
+                except Exception:
+                    all_tests = []
+            if not isinstance(all_tests, list):
+                all_tests = []
             valid_tests = [t for t in all_tests if isinstance(t, dict) and t.get("test_id")]
             if not valid_tests:
                 continue
@@ -110,12 +113,14 @@ def get_billing_patients(request):
 
             already_processed = set()
             if existing_sample and existing_sample.testdetails:
-                sample_tests = (
-                    existing_sample.testdetails
-                    if isinstance(existing_sample.testdetails, list)
-                    else json.loads(existing_sample.testdetails)
-                )
-                for st in sample_tests:
+                sample_tests = existing_sample.testdetails
+                if isinstance(sample_tests, str):
+                    try:
+                        sample_tests = json.loads(sample_tests) if isinstance(sample_tests, str) else (sample_tests or [])
+                    except Exception:
+                        sample_tests = []
+                
+                for st in (sample_tests if isinstance(sample_tests, list) else []):
                     # Exclude any test that has been processed beyond "Pending"
                     # Only "Pending" or missing statuses are shown in the collection list
                     if st.get("samplestatus") and st.get("samplestatus") != "Pending":
@@ -362,11 +367,14 @@ def sample_management(request):
 
                 if existing_sample:
                     try:
-                        existing_tests = (
-                            existing_sample.testdetails
-                            if isinstance(existing_sample.testdetails, list)
-                            else json.loads(existing_sample.testdetails or "[]")
-                        )
+                        existing_tests = existing_sample.testdetails
+                        if isinstance(existing_tests, str):
+                            try:
+                                existing_tests = json.loads(existing_tests) if isinstance(existing_tests, str) else (existing_tests or [])
+                            except Exception:
+                                existing_tests = []
+                        if not isinstance(existing_tests, list):
+                            existing_tests = []
                         if not isinstance(existing_tests, list):
                             existing_tests = []
                     except Exception:
@@ -411,6 +419,7 @@ def sample_management(request):
                             })
 
                     existing_sample.testdetails      = existing_tests
+                    existing_sample.package_id       = billing.package_id
                     existing_sample.lastmodified_by   = collected_by
                     existing_sample.lastmodified_date = timezone.now()
                     existing_sample.save()
@@ -440,6 +449,7 @@ def sample_management(request):
 
                     sample = Sample.objects.create(
                         barcode=barcode,
+                        package_id=billing.package_id,
                         company_id=company_id,
                         testdetails=formatted,
                         created_by=collected_by,
@@ -487,11 +497,14 @@ def sample_management(request):
             if not sample:
                 return Response({"error": "Sample not found"}, status=404)
 
-            existing = (
-                sample.testdetails
-                if isinstance(sample.testdetails, list)
-                else json.loads(sample.testdetails or "[]")
-            )
+            existing = sample.testdetails
+            if isinstance(existing, str):
+                try:
+                    existing = json.loads(existing) if isinstance(existing, str) else (existing or [])
+                except Exception:
+                    existing = []
+            if not isinstance(existing, list):
+                existing = []
             existing_map = {
                 t["test_id"]: i
                 for i, t in enumerate(existing)
@@ -561,6 +574,10 @@ def get_transferred_samples(request):
                 to_date    = datetime.strptime(to_date_str, "%Y-%m-%d") if to_date_str else from_date
                 end_of_day = datetime.combine(to_date, datetime.max.time())
 
+                if timezone.is_aware(timezone.now()):
+                    start_of_day = timezone.make_aware(start_of_day)
+                    end_of_day   = timezone.make_aware(end_of_day)
+
                 samples = samples.filter(
                     lastmodified_date__gte=start_of_day,
                     lastmodified_date__lte=end_of_day,
@@ -577,13 +594,14 @@ def get_transferred_samples(request):
             if not sample.testdetails:
                 continue
 
-            try:
-                tests = (
-                    sample.testdetails
-                    if isinstance(sample.testdetails, list)
-                    else json.loads(sample.testdetails)
-                )
-            except Exception:
+            # Djongo JSONField might return a list-like object or a string.
+            tests = sample.testdetails
+            if isinstance(tests, str):
+                try:
+                    tests = json.loads(tests)
+                except Exception:
+                    tests = []
+            if not isinstance(tests, list):
                 tests = []
 
             qualifying = [
@@ -622,6 +640,14 @@ def get_transferred_samples(request):
             for doc in testdetails_docs
         }
         client.close()
+
+        # ── 3. Resolve package name ─────────────────────────────────────────
+        all_package_ids = list(set(s.package_id for s in barcode_sample_map.values() if s.package_id))
+        from ..models import Package
+        package_name_map = {
+            p["package_id"]: p["package_name"]
+            for p in Package.objects.filter(package_id__in=all_package_ids).values("package_id", "package_name")
+        }
 
         # ── Build response ─────────────────────────────────────────────────
         transferred_samples = []
@@ -664,11 +690,16 @@ def get_transferred_samples(request):
                     "gender":       patient.gender,
                     "mobile":       patient.mobile,
                 }
+            
+            p_id = sample.package_id
+            p_name = package_name_map.get(p_id, p_id or "Standard / Mixed")
 
             transferred_samples.append({
                 "employee_id":      sample_employee_id,
                 "barcode":          barcode,
                 "patient_details":  patient_details,
+                "package_id":       p_id,
+                "package_name":     p_name,
                 "testdetails":      enriched_tests,
                 "transferred_date": sample.lastmodified_date,
                 "transferred_by":   sample.lastmodified_by,
@@ -770,7 +801,7 @@ def batch_management(request):
             if all_barcodes:
                 for doc in sample_col.find(
                     {"barcode": {"$in": all_barcodes}},
-                    {"barcode": 1, "testdetails": 1, "_id": 0}
+                    {"barcode": 1, "testdetails": 1, "package_id": 1, "_id": 0}
                 ):
                     sample_docs[doc["barcode"]] = doc
 
@@ -849,6 +880,12 @@ def batch_management(request):
                 except Exception as ee:
                     print(f"[batch_management] EmployeeRegistration lookup error: {ee}")
 
+            # ── Map package_id to names for exact display ────────────────────
+            # Use .values() to bypass problematic fields during model instantiation
+            from ..models import Package
+            all_package_ids = list(set([doc.get("package_id") for doc in sample_docs.values() if doc.get("package_id")]))
+            package_name_map = {p["package_id"]: p["package_name"] for p in Package.objects.filter(package_id__in=all_package_ids).values("package_id", "package_name")}
+
             # ── 7. Serialize + enrich every batch ─────────────────────────
             serializer       = BatchSerializer(batches, many=True)
             enriched_batches = []
@@ -873,6 +910,11 @@ def batch_management(request):
                     pinfo  = employee_info_map.get(emp_id, {}) if emp_id else {}
                     item["patient_id"]   = pinfo.get("patient_id",   emp_id or "N/A")
                     item["patient_name"] = pinfo.get("patient_name", "N/A")
+
+                    # Add Package identification
+                    pid = sample_docs.get(barcode, {}).get("package_id", "")
+                    item["package_id"]   = pid
+                    item["package_name"] = package_name_map.get(pid, pid or "Standard / Mixed")
 
                     # Build test list using BILLED tests as the source of truth
                     # ─────────────────────────────────────────────────────────
@@ -973,7 +1015,7 @@ def batch_management(request):
             raw_batch_details = request.data.get("batch_details", [])
             if isinstance(raw_batch_details, str):
                 try:
-                    raw_batch_details = json.loads(raw_batch_details)
+                    raw_batch_details = json.loads(raw_batch_details) if isinstance(raw_batch_details, str) else (raw_batch_details or [])
                 except json.JSONDecodeError:
                     return Response(
                         {"error": "Invalid JSON in batch_details"},
@@ -1014,7 +1056,7 @@ def batch_management(request):
                         testdetails = raw
                     elif isinstance(raw, str):
                         try:
-                            testdetails = json.loads(raw)
+                            testdetails = json.loads(raw) if isinstance(raw, str) else (raw or [])
                         except json.JSONDecodeError:
                             fixed = re.sub(
                                 r'([{,])(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:',

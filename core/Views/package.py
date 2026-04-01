@@ -139,7 +139,7 @@ def get_core_test(request):
         client.close()
 
 @csrf_exempt
-@api_view(['GET', 'POST'])
+@api_view(['GET', 'POST', 'PATCH'])
 def create_package(request):
     mongo = get_mongodb_collections()
     try:
@@ -208,7 +208,8 @@ def create_package(request):
                 "created_by": created_by,
                 "created_date": timezone.now(),
                 "investigations": unique_tests,
-                "totalAmount": total_amount
+                "totalAmount": total_amount,
+                "gender": data.get("gender", "Common")
             }
 
             result = mongo["core_package"].insert_one(mongo_data)
@@ -219,6 +220,41 @@ def create_package(request):
                 "message": "Package created successfully",
                 "data": mongo_data
             }, status=status.HTTP_201_CREATED)
+
+        # ==========================
+        # ✅ PATCH - Update Package (Name/Gender Only)
+        # ==========================
+        if request.method == "PATCH":
+            data = request.data
+            package_id = data.get("package_id")
+            company_id = data.get("company_id")
+            
+            if not package_id or not company_id:
+                return Response({"status": "error", "message": "package_id and company_id are required"}, status=400)
+            
+            update_fields = {}
+            if "package_name" in data:
+                update_fields["package_name"] = data["package_name"]
+            if "gender" in data:
+                update_fields["gender"] = data["gender"]
+            
+            if not update_fields:
+                return Response({"status": "error", "message": "No updateable fields provided"}, status=400)
+            
+            result = mongo["core_package"].update_one(
+                {"package_id": package_id, "company_id": company_id},
+                {"$set": update_fields}
+            )
+            
+            if result.matched_count == 0:
+                return Response({"status": "error", "message": "Package not found for this company"}, status=404)
+                
+            return Response({
+                "status": "success", 
+                "message": "Package updated successfully",
+                "matched_count": result.matched_count,
+                "modified_count": result.modified_count
+            }, status=200)
 
         # ==========================
         # ✅ GET - List Packages
