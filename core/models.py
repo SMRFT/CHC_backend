@@ -20,6 +20,7 @@ class Package(AuditModel):
     package_name = models.CharField(max_length=100, blank=True, null=True)
     investigations = models.JSONField(blank=True, null=True)
     totalAmount = models.CharField(max_length=100)
+    gender = models.CharField(max_length=20, default='Common')
     company_id = models.CharField(max_length=20, default='')
     package_id = models.CharField(max_length=20, default='')
 
@@ -41,6 +42,7 @@ class EmployeeRegistration(AuditModel):
     email = models.EmailField(max_length=200, blank=True, null=True)
     mobile = models.CharField(max_length=200, blank=True, null=True)
     doj = models.DateField(blank=True, null=True)
+    experience = models.CharField(max_length=50, blank=True, null=True)
 
     def __str__(self):
         return f"{self.employee_id} ({self.barcode})"
@@ -52,6 +54,7 @@ class Billing(AuditModel):
     mode = models.CharField(max_length=200, default="Onsite")
     employee_id = models.CharField(max_length=50)
     barcode = models.CharField(max_length=50, primary_key=True) 
+    package_id = models.CharField(max_length=50, default="")
     testdetails = models.JSONField(default=list)
     chctestdetails = models.JSONField(default=list)
     netAmount = models.DecimalField(max_digits=10, decimal_places=2)
@@ -66,6 +69,7 @@ class Sample(AuditModel):
     date = models.DateTimeField(auto_now_add=True)
     company_id = models.CharField(max_length=20, default='CHC002')
     barcode = models.CharField(primary_key=True, max_length=50)
+    package_id = models.CharField(max_length=50, default="")
     testdetails = models.JSONField(blank=True, null=True)
 
     def __str__(self):
@@ -141,6 +145,7 @@ class unregisteredEmployee(models.Model):
     gender = models.CharField(max_length=10)
     dob = models.DateField(blank=True, null=True)
     doj = models.DateField(blank=True, null=True)
+    experience = models.CharField(max_length=50, blank=True, null=True)
     age = models.IntegerField()
     department = models.CharField(max_length=200, blank=True, null=True)
     company_name = models.CharField(max_length=100)
