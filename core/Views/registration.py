@@ -857,6 +857,39 @@ def save_investigation(request):
                 data['vitals'] = json.loads(raw_vitals)
             elif not isinstance(raw_vitals, dict):
                 data['vitals'] = {}
+            
+            vitals = data['vitals']
+            # --- Auto-calculate Status Fields ---
+            # BMI Status: <25=Normal, 25-30=Over Weight, >30=Obese
+            try:
+                bmi_val = float(vitals.get('bmi', 0))
+                if bmi_val > 0:
+                    if bmi_val < 25: vitals['bmi_status'] = "Normal"
+                    elif 25 <= bmi_val < 30: vitals['bmi_status'] = "Over Weight"
+                    else: vitals['bmi_status'] = "Obese"
+            except: pass
+
+            # BP Status: >140/90=High, 140/90 to 90/60=Normal, <90/60=Low
+            bp_val = str(vitals.get('blood_pressure', ''))
+            if '/' in bp_val:
+                try:
+                    sys_str, dia_str = bp_val.split('/')
+                    sys = float(sys_str.strip())
+                    dia = float(dia_str.strip())
+                    if sys > 140 or dia > 90: vitals['BP_status'] = "High"
+                    elif sys < 90 or dia < 60: vitals['BP_status'] = "Low"
+                    else: vitals['BP_status'] = "Normal"
+                except: pass
+
+            # SpO2 Status: >100=High, 60-100=Normal, <60=Low
+            try:
+                spo_raw = vitals.get('spo2', 0)
+                if spo_raw:
+                    spo2_val = float(spo_raw)
+                    if spo2_val > 100: vitals['spo2_status'] = "High"
+                    elif 60 <= spo2_val <= 100: vitals['spo2_status'] = "Normal"
+                    elif 0 < spo2_val < 60: vitals['spo2_status'] = "Low"
+            except: pass
 
         raw_va = data.get('visual_acuity')
         if raw_va and isinstance(raw_va, str):
