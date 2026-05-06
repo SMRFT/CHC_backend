@@ -19,6 +19,8 @@ class Register(AuditModel):
 class Package(AuditModel):
     package_name = models.CharField(max_length=100, blank=True, null=True)
     investigations = models.JSONField(blank=True, null=True)
+    dynamic_fields = models.JSONField(default=list, blank=True, null=True)
+    addon_investigation = models.JSONField(default=list, blank=True, null=True)
     totalAmount = models.CharField(max_length=100)
     gender = models.CharField(max_length=20, default='Common')
     company_id = models.CharField(max_length=20, default='')
@@ -57,6 +59,8 @@ class Billing(AuditModel):
     package_id = models.CharField(max_length=50, default="")
     testdetails = models.JSONField(default=list)
     chctestdetails = models.JSONField(default=list)
+    dynamic_fields = models.JSONField(default=list)
+    addon_investigation = models.JSONField(default=list)
     netAmount = models.DecimalField(max_digits=10, decimal_places=2)
     paid_at = models.DateTimeField(blank=True, null=True)
     paymentMode = models.CharField(max_length=50,default="Credit")
@@ -97,12 +101,9 @@ class Investigation(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=20, default="pending")
     patient_history = models.CharField(max_length=1200, blank=True, null=True)
-    
     # Dynamic Test Results
     test_results = models.JSONField(default=list, blank=True, null=True) 
-    
-    # Example structure: [ { "test_id": "...", "test_name": "...", "results": {...}, "files": [...], "notes": "..." } ]
-    
+    dynamic_fields = models.JSONField(default=list, blank=True, null=True)
     # company_id = models.CharField(max_length=10, default="CHC002")
 
     def __str__(self):
@@ -120,6 +121,12 @@ class CHCtest(models.Model):
     is_fileuploaded = models.BooleanField(default=False)
     is_notes = models.BooleanField(default=False)
     is_report = models.BooleanField(default=False)
+
+class AddOnInvestigation(models.Model):
+    test_name = models.CharField(max_length=100)
+    test_price = models.CharField(max_length=100)
+    test_id = models.CharField(primary_key=True, max_length=20)
+    is_active = models.BooleanField(default=True)
     
 class Company(models.Model):
     company_id = models.CharField(max_length=20, primary_key=True)
@@ -163,3 +170,9 @@ class EmployeeType(models.Model):
     def __str__(self):
         return self.name
         
+class DynamicInvestigationFields(models.Model):
+    field_id = models.CharField(unique=True, primary_key=True, max_length=20)
+    field_name = models.CharField(max_length=100)
+    field_values = models.JSONField(default=list)
+    is_active = models.BooleanField(default=True) 
+    

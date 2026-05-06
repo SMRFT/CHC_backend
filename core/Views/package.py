@@ -199,6 +199,16 @@ def create_package(request):
             
             package_id = f"PCK{new_id_num:04d}"
 
+            # Helper to ensure object array and strip is_active
+            def clean_list(val):
+                if isinstance(val, str):
+                    try: val = json.loads(val)
+                    except: val = []
+                if not isinstance(val, list): val = []
+                for item in val:
+                    if isinstance(item, dict): item.pop("is_active", None)
+                return val
+
             # ✅ MongoDB Save
             mongo_data = {
                 "package_name": package_name,
@@ -208,6 +218,8 @@ def create_package(request):
                 "created_by": created_by,
                 "created_date": timezone.now(),
                 "investigations": unique_tests,
+                "dynamic_fields": clean_list(data.get("dynamic_fields")),
+                "addon_investigation": clean_list(data.get("addon_investigation")),
                 "totalAmount": total_amount,
                 "gender": data.get("gender", "Common")
             }

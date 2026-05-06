@@ -1,7 +1,7 @@
 #urls.py
 from django.urls import path
 from core import views
-from .Views import sample,package,registration,security, company, billing
+from .Views import sample,package,registration,security, company, billing, investigation_fields
 
 urlpatterns = [
 
@@ -56,4 +56,10 @@ urlpatterns = [
     path("get_credit_billings/", billing.get_credit_billings, name="get_credit_billings"),
     path("mark_as_paid/", billing.mark_as_paid, name="mark_as_paid"),
     path("payment_report/", billing.payment_report, name="payment_report"),
+
+    # investigation fields
+    path("dynamic_fields/", investigation_fields.dynamic_fields_list_create, name="dynamic_fields_list_create"),
+    path("dynamic_fields/next-id/", investigation_fields.get_next_dynamic_field_id, name="get_next_dynamic_field_id"),
+    path("addon_investigations/", investigation_fields.addon_investigation_list_create, name="addon_investigation_list_create"),
+    path("addon_investigations/next-id/", investigation_fields.get_next_addon_test_id, name="get_next_addon_test_id"),
 ]
