@@ -113,6 +113,20 @@ class CHCtestSerializer(serializers.ModelSerializer):
         model = CHCtest
         fields = "__all__"
 
+from .models import AddOnInvestigation
+class AddOnInvestigationSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    class Meta:
+        model = AddOnInvestigation
+        fields = "__all__"
+
+from .models import DynamicInvestigationFields
+class DynamicInvestigationFieldsSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    class Meta:
+        model = DynamicInvestigationFields
+        fields = "__all__"
+
 from .models import unregisteredEmployee
 class unregisteredEmployeeSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)

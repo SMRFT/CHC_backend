@@ -222,6 +222,48 @@ def register_employee_with_billing(request):
         
         employee_obj = employee_serializer.save()
 
+        # --- Fetch Package Details from MongoDB ---
+        package_id = data.get("package_id", "")
+        pkg_addons = []
+        pkg_dynamic_fields = []
+        
+        if package_id:
+            try:
+                from pymongo import MongoClient
+                import os
+                uri = os.getenv("GLOBAL_DB_HOST")
+                db_name = os.getenv("CHC_DB_NAME", "Corporatehealthcheckup")
+                client = MongoClient(uri)
+                db = client[db_name]
+                pkg = db["core_package"].find_one({"package_id": package_id})
+                if pkg:
+                    pkg_addons = pkg.get("addon_investigation", [])
+                    pkg_dynamic_fields = pkg.get("dynamic_fields", [])
+                    
+                    # Strip is_active from pkg defaults
+                    for item in pkg_addons: item.pop("is_active", None)
+                    for item in pkg_dynamic_fields: item.pop("is_active", None)
+                client.close()
+            except Exception as e:
+                print(f"Error fetching package for billing: {e}")
+
+        # Helper to ensure object array and strip is_active
+        def clean_json_list(val):
+            if isinstance(val, str):
+                try:
+                    val = json.loads(val)
+                except:
+                    val = []
+            if not isinstance(val, list):
+                val = []
+            for item in val:
+                if isinstance(item, dict):
+                    item.pop("is_active", None)
+            return val
+
+        dynamic_fields_input = clean_json_list(data.get("dynamic_fields"))
+        addon_investigation_input = clean_json_list(data.get("addon_investigation"))
+
         # --- Billing ---
         raw_test_details = data.get("testdetails", [])
         standard_tests = []
@@ -250,6 +292,8 @@ def register_employee_with_billing(request):
             "package_id": data.get("package_id", ""),
             "testdetails": standard_tests,
             "chctestdetails": chct_tests,
+            "dynamic_fields": dynamic_fields_input or pkg_dynamic_fields,
+            "addon_investigation": addon_investigation_input or pkg_addons,
             "netAmount": data.get("totalAmount", 0),
             "paymentMode": payment_mode,
             "transaction_id": data.get("transaction_id", ""),
@@ -359,10 +403,12 @@ def get_offsite_billings(request):
                 "date": billing.date,
                 "testdetails": test_details,
                 "chctestdetails": chc_test_details,
+                "dynamic_fields": getattr(billing, 'dynamic_fields', []),
+                "addon_investigation": getattr(billing, 'addon_investigation', []),
                 "package_name": (emp.get("package_name") or emp.get("package") or "-") if emp else "-",
                 "netAmount": float(str(billing.netAmount)) if billing.netAmount else 0,
                 "paymentMode": billing.paymentMode,
-                "api_version": "v3_json_parsed" 
+                "api_version": "v4_dynamic_fields" 
             }
 
             # Search filter (Name, ID, Barcode, Dept)
@@ -528,6 +574,29 @@ def get_all_employees(request):
                         company_cache[c_id] = comp_obj.company_name if comp_obj else "-"
                     c_name = company_cache[c_id]
 
+                # Fetch default dynamic fields from Billing record
+                dyn_fields = billing.dynamic_fields if hasattr(billing, 'dynamic_fields') else []
+
+                # --- Fetch Data from Investigation Collection ---
+                investigation_data = {}
+                try:
+                    investigation_collection = db["core_investigation"]
+                    inv_doc = investigation_collection.find_one({"barcode": str(billing.barcode)})
+                    if inv_doc:
+                        investigation_data = {
+                            "status": inv_doc.get("status", "pending"),
+                            "patient_history": inv_doc.get("patient_history", ""),
+                            "test_results": inv_doc.get("test_results", []),
+                            "dynamic_fields": inv_doc.get("dynamic_fields", []),
+                            "vitals": inv_doc.get("vitals", {}),
+                            "visual_acuity": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {})
+                        }
+                except Exception as e:
+                    print(f"Error fetching investigation for {billing.barcode}: {e}")
+
+                # Use investigation dynamic fields if available, else billing defaults
+                final_dyn_fields = investigation_data.get("dynamic_fields") or dyn_fields
+                
                 employees_map[emp_id] = {
                     "employee_name": employee.get("employee_name", ""),
                     "age": employee.get("age", ""),
@@ -536,16 +605,20 @@ def get_all_employees(request):
                     "barcode": str(billing.barcode) if hasattr(billing, "barcode") else "",
                     "company_name": c_name,
                     "created_date": employee.get("created_date", ""),
-                    "billing_testdetails": []
+                    "billing_testdetails": [],
+                    "dynamic_fields": final_dyn_fields,
+                    # Include existing investigation data
+                    "status": investigation_data.get("status", "pending"),
+                    "patient_history": investigation_data.get("patient_history", ""),
+                    "test_results_saved": investigation_data.get("test_results", []),
+                    "vitals": investigation_data.get("vitals", {}),
+                    "visual_acuity": investigation_data.get("visual_acuity", {})
                 }
                 
                 # Enrich test details with configuration
-                # Only use CHCT tests for investigations as requested
                 merged_billing_tests = billing.chctestdetails or []
-                
-                # Handle potential JSON strings
                 if isinstance(merged_billing_tests, str):
-                    try: merged_billing_tests = json.loads(merged_billing_tests) if isinstance(merged_billing_tests, str) else (merged_billing_tests or [])
+                    try: merged_billing_tests = json.loads(merged_billing_tests)
                     except: merged_billing_tests = []
                 
                 enriched_tests = []
@@ -560,7 +633,6 @@ def get_all_employees(request):
                         test["report"] = test_obj.report
                         test["is_active"] = test_obj.is_active
                     else:
-                        # Default to False if not configured, ensuring dynamic behavior
                         test["is_fileuploaded"] = False
                         test["is_notes"] = False
                         test["is_report"] = False
@@ -1000,6 +1072,15 @@ def save_investigation(request):
         barcode = data.get('barcode')
         investigation_collection = db["core_investigation"]
         
+        # Clean and parse dynamic_fields
+        dyn_fields_raw = data.get('dynamic_fields', [])
+        if isinstance(dyn_fields_raw, str):
+            try: dyn_fields_raw = json.loads(dyn_fields_raw)
+            except: dyn_fields_raw = []
+        if not isinstance(dyn_fields_raw, list): dyn_fields_raw = []
+        for df in dyn_fields_raw:
+            if isinstance(df, dict): df.pop("is_active", None)
+
         # Prepare the update document
         update_doc = {
             "employee_id": data.get('employee_id'),
@@ -1009,6 +1090,7 @@ def save_investigation(request):
             "status": data.get('status', 'pending'),
             "patient_history": data.get('patient_history', ''),
             "test_results": final_results,
+            "dynamic_fields": dyn_fields_raw,
             "CHCT001": va_data,
             # "company_id": data.get('company_id', 'CHC002')
         }
