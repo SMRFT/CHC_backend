@@ -222,28 +222,42 @@ def register_employee_with_billing(request):
         
         employee_obj = employee_serializer.save()
 
-        # --- Fetch Package Details from MongoDB ---
+        # --- Fetch Package Details from MongoDB if missing from payload ---
         package_id = data.get("package_id", "")
         pkg_addons = []
         pkg_dynamic_fields = []
         
         if package_id:
             try:
+                # Use global mongo_db if possible, or fall back to local connection
                 from pymongo import MongoClient
                 import os
                 uri = os.getenv("GLOBAL_DB_HOST")
                 db_name = os.getenv("CHC_DB_NAME", "Corporatehealthcheckup")
-                client = MongoClient(uri)
-                db = client[db_name]
-                pkg = db["core_package"].find_one({"package_id": package_id})
+                client_pkg = MongoClient(uri)
+                db_pkg = client_pkg[db_name]
+                
+                # Search by package_id (string or int)
+                pkg = db_pkg["core_package"].find_one({"package_id": package_id})
+                if not pkg:
+                    # Fallback search as int if string failed
+                    try: pkg = db_pkg["core_package"].find_one({"package_id": int(package_id)})
+                    except: pass
+                
                 if pkg:
                     pkg_addons = pkg.get("addon_investigation", [])
                     pkg_dynamic_fields = pkg.get("dynamic_fields", [])
                     
+                    # Ensure they are lists
+                    if not isinstance(pkg_addons, list): pkg_addons = []
+                    if not isinstance(pkg_dynamic_fields, list): pkg_dynamic_fields = []
+
                     # Strip is_active from pkg defaults
-                    for item in pkg_addons: item.pop("is_active", None)
-                    for item in pkg_dynamic_fields: item.pop("is_active", None)
-                client.close()
+                    for item in pkg_addons: 
+                        if isinstance(item, dict): item.pop("is_active", None)
+                    for item in pkg_dynamic_fields: 
+                        if isinstance(item, dict): item.pop("is_active", None)
+                client_pkg.close()
             except Exception as e:
                 print(f"Error fetching package for billing: {e}")
 
@@ -263,6 +277,10 @@ def register_employee_with_billing(request):
 
         dynamic_fields_input = clean_json_list(data.get("dynamic_fields"))
         addon_investigation_input = clean_json_list(data.get("addon_investigation"))
+
+        # Final fields: use input if truthy (non-empty list), else use package defaults
+        final_dynamic_fields = dynamic_fields_input if dynamic_fields_input else pkg_dynamic_fields
+        final_addons = addon_investigation_input if addon_investigation_input else pkg_addons
 
         # --- Billing ---
         raw_test_details = data.get("testdetails", [])
@@ -292,8 +310,8 @@ def register_employee_with_billing(request):
             "package_id": data.get("package_id", ""),
             "testdetails": standard_tests,
             "chctestdetails": chct_tests,
-            "dynamic_fields": dynamic_fields_input or pkg_dynamic_fields,
-            "addon_investigation": addon_investigation_input or pkg_addons,
+            "dynamic_fields": final_dynamic_fields,
+            "addon_investigation": final_addons,
             "netAmount": data.get("totalAmount", 0),
             "paymentMode": payment_mode,
             "transaction_id": data.get("transaction_id", ""),
