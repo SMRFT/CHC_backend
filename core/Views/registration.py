@@ -247,6 +247,7 @@ def register_employee_with_billing(request):
                 if pkg:
                     pkg_addons = pkg.get("addon_investigation", [])
                     pkg_dynamic_fields = pkg.get("dynamic_fields", [])
+                    pkg_extra_barcode = pkg.get("extra_barcode", 3)
                     
                     # Ensure they are lists
                     if not isinstance(pkg_addons, list): pkg_addons = []
@@ -257,6 +258,8 @@ def register_employee_with_billing(request):
                         if isinstance(item, dict): item.pop("is_active", None)
                     for item in pkg_dynamic_fields: 
                         if isinstance(item, dict): item.pop("is_active", None)
+                else:
+                    pkg_extra_barcode = 3
                 client_pkg.close()
             except Exception as e:
                 print(f"Error fetching package for billing: {e}")
@@ -316,7 +319,8 @@ def register_employee_with_billing(request):
             "paymentMode": payment_mode,
             "transaction_id": data.get("transaction_id", ""),
             "paid_at": paid_at,
-            "mode": registration_mode
+            "mode": registration_mode,
+            "extra_barcode": int(data.get("extra_barcode", pkg_extra_barcode if 'pkg_extra_barcode' in locals() else 3))
         }
 
         billing_serializer = BillingSerializer(data=billing_payload)
@@ -426,7 +430,8 @@ def get_offsite_billings(request):
                 "package_name": (emp.get("package_name") or emp.get("package") or "-") if emp else "-",
                 "netAmount": float(str(billing.netAmount)) if billing.netAmount else 0,
                 "paymentMode": billing.paymentMode,
-                "api_version": "v4_dynamic_fields" 
+                "api_version": "v4_dynamic_fields",
+                "extra_barcode": getattr(billing, 'extra_barcode', 3)
             }
 
             # Search filter (Name, ID, Barcode, Dept)
@@ -473,7 +478,8 @@ def get_test_details(request):
             test_map[test.get("test_id")] = {
                 "test_id": test.get("test_id"),
                 "test_name": test.get("test_name"),
-                "collection_container": test.get("collection_container", "-")
+                "collection_container": test.get("collection_container", "-"),
+                "suffix": test.get("suffix", "")
             }
 
         # Ensure we return them in the order requested or at least structured
@@ -491,7 +497,8 @@ def get_test_details(request):
                 results.append({
                     "test_id": tid,
                     "test_name": "Unknown",
-                    "collection_container": "N/A"
+                    "collection_container": "N/A",
+                    "suffix": ""
                 })
 
         return Response({"status": "success", "data": results}, status=status.HTTP_200_OK)
@@ -630,7 +637,8 @@ def get_all_employees(request):
                     "patient_history": investigation_data.get("patient_history", ""),
                     "test_results_saved": investigation_data.get("test_results", []),
                     "vitals": investigation_data.get("vitals", {}),
-                    "visual_acuity": investigation_data.get("visual_acuity", {})
+                    "visual_acuity": investigation_data.get("visual_acuity", {}),
+                    "extra_barcode": getattr(billing, 'extra_barcode', 3)
                 }
                 
                 # Enrich test details with configuration
@@ -797,6 +805,7 @@ def get_investigations(request):
                 'visual_acuity': inv.get('visual_acuity') or inv.get('CHCT001', {}),
                 'company_id': company_id,
                 'company_name': company_name,
+                'extra_barcode': inv.get('extra_barcode', 3),
             })
 
         return Response(data, status=status.HTTP_200_OK)
