@@ -25,6 +25,7 @@ class Package(AuditModel):
     gender = models.CharField(max_length=20, default='Common')
     company_id = models.CharField(max_length=20, default='')
     package_id = models.CharField(max_length=20, default='')
+    extra_barcode = models.IntegerField(default=3)
 
     def __str__(self):
         return f"Package: {self.package_name} - {self.totalAmount}"
@@ -65,6 +66,7 @@ class Billing(AuditModel):
     paid_at = models.DateTimeField(blank=True, null=True)
     paymentMode = models.CharField(max_length=50,default="Credit")
     transaction_id = models.CharField(max_length=50,blank=True, null=True)
+    extra_barcode = models.IntegerField(default=3)
     def __str__(self):
         return f"Billing({self.employee_id} - {self.barcode})" 
 

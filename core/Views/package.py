@@ -221,7 +221,8 @@ def create_package(request):
                 "dynamic_fields": clean_list(data.get("dynamic_fields")),
                 "addon_investigation": clean_list(data.get("addon_investigation")),
                 "totalAmount": total_amount,
-                "gender": data.get("gender", "Common")
+                "gender": data.get("gender", "Common"),
+                "extra_barcode": int(data.get("extra_barcode", 3))
             }
 
             result = mongo["core_package"].insert_one(mongo_data)
@@ -249,6 +250,8 @@ def create_package(request):
                 update_fields["package_name"] = data["package_name"]
             if "gender" in data:
                 update_fields["gender"] = data["gender"]
+            if "extra_barcode" in data:
+                update_fields["extra_barcode"] = int(data["extra_barcode"])
             
             if not update_fields:
                 return Response({"status": "error", "message": "No updateable fields provided"}, status=400)
@@ -281,6 +284,8 @@ def create_package(request):
             packages = []
             for pkg in mongo["core_package"].find(query):
                 pkg["_id"] = str(pkg["_id"])
+                if "extra_barcode" not in pkg:
+                    pkg["extra_barcode"] = 3
                 packages.append(pkg)
 
             return Response({
