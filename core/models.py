@@ -178,3 +178,12 @@ class DynamicInvestigationFields(models.Model):
     field_values = models.JSONField(default=list)
     is_active = models.BooleanField(default=True) 
     
+class InvestigationChecklist(models.Model):
+    employee_id = models.CharField(unique=True, primary_key=True, max_length=20)
+    company_id = models.CharField(max_length=20)
+    checklist = models.JSONField(default=list)
+    created_date = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True) 
+    
+    def __str__(self):
+        return f"Checklist: {self.employee_id} ({self.created_date})"

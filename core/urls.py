@@ -62,4 +62,8 @@ urlpatterns = [
     path("dynamic_fields/next-id/", investigation_fields.get_next_dynamic_field_id, name="get_next_dynamic_field_id"),
     path("addon_investigations/", investigation_fields.addon_investigation_list_create, name="addon_investigation_list_create"),
     path("addon_investigations/next-id/", investigation_fields.get_next_addon_test_id, name="get_next_addon_test_id"),
+
+    # Investigation Checklist
+    path("get_investigation_checklists/", registration.get_investigation_checklists, name="get_investigation_checklists"),
+    path("update_investigation_checklist/", registration.update_investigation_checklist, name="update_investigation_checklist"),
 ]
