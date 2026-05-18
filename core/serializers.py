@@ -133,3 +133,9 @@ class unregisteredEmployeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = unregisteredEmployee
         fields = "__all__"
+
+from .models import InvestigationChecklist
+class InvestigationChecklistSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InvestigationChecklist
+        fields = "__all__"

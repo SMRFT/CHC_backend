@@ -2,15 +2,15 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
-from ..models import EmployeeRegistration, Billing, Investigation, CHCtest, Company, unregisteredEmployee, EmployeeType
-from ..serializers import EmployeeRegistrationSerializer, InvestigationSerializer, unregisteredEmployeeSerializer
+from ..models import EmployeeRegistration, Billing, Investigation, CHCtest, Company, unregisteredEmployee, EmployeeType, InvestigationChecklist
+from ..serializers import EmployeeRegistrationSerializer, InvestigationSerializer, unregisteredEmployeeSerializer, InvestigationChecklistSerializer
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 import logging
 import traceback
 import os
 import json
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pymongo import MongoClient
 import certifi
 
@@ -160,6 +160,17 @@ def register_employee_with_billing(request):
     """
     Save EmployeeRegistration and Billing data simultaneously
     """
+    def parse_date_robust(date_str):
+        if not date_str:
+            return None
+        # Try various formats
+        for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%m-%d-%Y', '%Y/%m/%d'):
+            try:
+                return datetime.strptime(str(date_str).strip(), fmt).strftime('%Y-%m-%d')
+            except (ValueError, TypeError):
+                continue
+        return date_str # Return as is if all fail, serializer will catch it
+    
     try:
         data = request.data
 
@@ -202,8 +213,8 @@ def register_employee_with_billing(request):
             "employee_id": employee_id,
             "gender": data.get("gender"),
             "age": data.get("age"),
-            "dob": data.get("dob") or None,
-            "doj": data.get("doj") or None,
+            "dob": parse_date_robust(data.get("dob")),
+            "doj": parse_date_robust(data.get("doj")),
             "experience": data.get("experience") or None,
             "designation": data.get("designation") or None,
             "employee_type": data.get("employee_type") or None,
@@ -330,6 +341,47 @@ def register_employee_with_billing(request):
                             status=status.HTTP_400_BAD_REQUEST)
         
         billing_obj = billing_serializer.save()
+
+        # --- Initialize InvestigationChecklist ---
+        try:
+            checklist_items = []
+            for test in chct_tests:
+                checklist_items.append({
+                    "test_id": str(test.get("test_id", "")),
+                    "test_name": test.get("testname", ""),
+                    "is_completed": False,
+                    "approved_at": None,
+
+                })
+            
+            # Add global vitals entry
+            checklist_items.append({
+                "test_name": "vitals",
+                "is_completed": False,
+                "approved_at": None
+            })
+            
+            if checklist_items:
+                # Use PyMongo to ensure native BSON array storage
+                client = MongoClient(MONGO_URI)
+                db = client[DB_NAME]
+                cl_collection = db["core_investigationchecklist"]
+                cl_collection.update_one(
+                    {"employee_id": employee_id},
+                    {
+                        "$set": {
+                            "company_id": company_id,
+                            "checklist": checklist_items,
+                            "is_active": True,
+                            "lastmodified_date": datetime.now()
+                        },
+                        "$setOnInsert": {"created_date": datetime.now()}
+                    },
+                    upsert=True
+                )
+                client.close()
+        except Exception as e:
+            logger.error(f"Error initializing InvestigationChecklist: {str(e)}")
 
         return Response({
             "status": "success",
@@ -1389,5 +1441,124 @@ def create_employee_type(request):
             return Response({"status": "success", "message": "Employee Type created"}, status=status.HTTP_201_CREATED)
         else:
             return Response({"status": "error", "message": "Employee Type already exists"}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_investigation_checklists(request):
+    try:
+        from_date = request.GET.get('from_date')
+        to_date = request.GET.get('to_date')
+        company_id = request.GET.get('company_id')
+
+        client = MongoClient(MONGO_URI)
+        db = client["Corporatehealthcheckup"]
+        cl_collection = db["core_investigationchecklist"]
+        emp_collection = db["core_employeeregistration"]
+
+        query = {}
+        if company_id and company_id != 'all' and company_id != '':
+            query["company_id"] = company_id
+
+        if from_date:
+            query["created_date"] = {"$gte": datetime.strptime(from_date, '%Y-%m-%d')}
+        if to_date:
+            if "created_date" not in query: query["created_date"] = {}
+            query["created_date"]["$lte"] = datetime.strptime(to_date, '%Y-%m-%d') + timedelta(days=1)
+
+        checklists = cl_collection.find(query).sort("created_date", -1)
+
+        results = []
+        total_patients = 0
+        fully_completed = 0
+        test_counts = {} # { "PFT": { "total": 5, "completed": 2 }, ... }
+
+        for cl in checklists:
+            total_patients += 1
+            emp = emp_collection.find_one({"employee_id": cl.get("employee_id")})
+            
+            # Robust checklist parsing
+            checklist_data = cl.get("checklist", [])
+            if isinstance(checklist_data, str):
+                try: checklist_data = json.loads(checklist_data)
+                except: checklist_data = []
+
+            is_all_done = True
+            if not checklist_data: is_all_done = False
+
+            for item in checklist_data:
+                t_name = item.get("test_name", "Unknown")
+                if t_name not in test_counts:
+                    test_counts[t_name] = {"total": 0, "completed": 0}
+                
+                test_counts[t_name]["total"] += 1
+                if item.get("is_completed"):
+                    test_counts[t_name]["completed"] += 1
+                else:
+                    is_all_done = False
+
+            if is_all_done:
+                fully_completed += 1
+
+            results.append({
+                "employee_id": cl.get("employee_id"),
+                "company_id": cl.get("company_id"),
+                "employee_name": emp.get("employee_name", "-") if emp else "-",
+                "gender": emp.get("gender", "-") if emp else "-",
+                "age": emp.get("age", "-") if emp else "-",
+                "checklist": checklist_data,
+                "created_date": cl.get("created_date"),
+            })
+        
+        client.close()
+        return Response({
+            "status": "success", 
+            "data": results,
+            "stats": {
+                "total_patients": total_patients,
+                "fully_completed_patients": fully_completed,
+                "test_stats": test_counts
+            }
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+def update_investigation_checklist(request):
+    try:
+        data = request.data
+        employee_id = data.get("employee_id")
+        checklist = data.get("checklist")
+
+        if not employee_id:
+            return Response({"status": "error", "message": "employee_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        client = MongoClient(MONGO_URI)
+        db = client[DB_NAME]
+        cl_collection = db["core_investigationchecklist"]
+
+        # Ensure checklist is a list
+        if isinstance(checklist, str):
+            try: checklist = json.loads(checklist)
+            except: pass
+
+        # Handle approved_at logic if needed (optional if frontend already does it)
+        # But good to have a backup or do it here
+        for item in checklist:
+            if item.get("is_completed") and not item.get("approved_at"):
+                item["approved_at"] = datetime.now().isoformat()
+            elif not item.get("is_completed"):
+                item["approved_at"] = None
+
+        result = cl_collection.update_one(
+            {"employee_id": employee_id},
+            {"$set": {"checklist": checklist, "lastmodified_date": datetime.now()}}
+        )
+
+        client.close()
+        if result.matched_count == 0:
+            return Response({"status": "error", "message": "Checklist not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({"status": "success", "message": "Checklist updated successfully"}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
