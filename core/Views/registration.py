@@ -2,7 +2,7 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
-from ..models import EmployeeRegistration, Billing, Investigation, CHCtest, Company, unregisteredEmployee, EmployeeType, InvestigationChecklist
+from ..models import EmployeeRegistration, CHCRegistration, Billing, Investigation, CHCtest, Company, unregisteredEmployee, EmployeeType, InvestigationChecklist
 from ..serializers import EmployeeRegistrationSerializer, InvestigationSerializer, unregisteredEmployeeSerializer, InvestigationChecklistSerializer
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -150,8 +150,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
-from ..models import EmployeeRegistration, Billing
-from ..serializers import EmployeeRegistrationSerializer, BillingSerializer
+from ..models import EmployeeRegistration, Billing, CHCRegistration
+from ..serializers import EmployeeRegistrationSerializer, BillingSerializer, CHCRegistrationSerializer
 from rest_framework.exceptions import ValidationError
 import json
 
@@ -191,7 +191,7 @@ def register_employee_with_billing(request):
             prefix = f"CHC{prefix_char}"
             
             # Find the highest existing sequence for this prefix
-            last_emp = EmployeeRegistration.objects.filter(employee_id__startswith=prefix).order_by("-employee_id").first()
+            last_emp = CHCRegistration.objects.filter(employee_id__startswith=prefix).order_by("-employee_id").first()
             if last_emp and last_emp.employee_id:
                 try:
                     # Extract numeric part (assuming CHCX00001 pattern)
@@ -226,12 +226,12 @@ def register_employee_with_billing(request):
             "created_date": timezone.now()
         }
 
-        employee_serializer = EmployeeRegistrationSerializer(data=employee_payload)
-        if not employee_serializer.is_valid():
-            return Response({"status": "error", "message": employee_serializer.errors},
+        chc_serializer = CHCRegistrationSerializer(data=employee_payload)
+        if not chc_serializer.is_valid():
+            return Response({"status": "error", "message": chc_serializer.errors},
                             status=status.HTTP_400_BAD_REQUEST)
         
-        employee_obj = employee_serializer.save()
+        chc_obj = chc_serializer.save()
 
         # --- Fetch Package Details from MongoDB if missing from payload ---
         package_id = data.get("package_id", "")
@@ -336,7 +336,7 @@ def register_employee_with_billing(request):
 
         billing_serializer = BillingSerializer(data=billing_payload)
         if not billing_serializer.is_valid():
-            employee_obj.delete()
+            chc_obj.delete()
             return Response({"status": "error", "message": billing_serializer.errors},
                             status=status.HTTP_400_BAD_REQUEST)
         
@@ -386,7 +386,7 @@ def register_employee_with_billing(request):
         return Response({
             "status": "success",
             "message": f"Employee and Billing saved successfully ({registration_mode} Mode)",
-            "employee": EmployeeRegistrationSerializer(employee_obj).data,
+            "employee": CHCRegistrationSerializer(chc_obj).data,
             "billing": BillingSerializer(billing_obj).data
         }, status=status.HTTP_201_CREATED)
 
@@ -448,11 +448,11 @@ def get_offsite_billings(request):
 
         client = MongoClient(MONGO_URI)
         db = client["Corporatehealthcheckup"]
-        emp_collection = db["core_employeeregistration"]
+        chc_collection = db["core_chcregistration"]
 
         results = []
         for billing in billing_query:
-            emp = emp_collection.find_one({"employee_id": billing.employee_id})
+            emp = chc_collection.find_one({"employee_id": billing.employee_id})
             
             # Robust JSON handling for test details
             test_details = billing.testdetails or []
@@ -611,7 +611,7 @@ def get_all_employees(request):
     # MongoDB connection
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
-    collection = db["core_employeeregistration"]
+    collection = db["core_chcregistration"]
 
     from_date_str = request.GET.get('from_date')
     to_date_str = request.GET.get('to_date')
@@ -733,7 +733,7 @@ def get_all_registered_employees(request):
         to_date = request.GET.get('to_date')
         company_id = request.GET.get('company_id')
 
-        employees = EmployeeRegistration.objects.all().order_by('-created_date')
+        employees = CHCRegistration.objects.all().order_by('-created_date')
 
         if company_id and company_id != 'all' and company_id != '':
             employees = employees.filter(company_id=company_id)
@@ -758,7 +758,7 @@ def get_all_registered_employees(request):
             except Exception as e:
                 logger.warning(f"To date parse error: {e}")
 
-        serializer = EmployeeRegistrationSerializer(employees, many=True)
+        serializer = CHCRegistrationSerializer(employees, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error(f"Error in get_all_registered_employees: {str(e)}")
@@ -785,7 +785,7 @@ def get_investigations(request):
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     investigation_collection = db["core_investigation"]
-    employee_collection = db["core_employeeregistration"]
+    employee_collection = db["core_chcregistration"]
     
     from_date_str = request.GET.get('from_date')
     to_date_str = request.GET.get('to_date')
@@ -1454,7 +1454,7 @@ def get_investigation_checklists(request):
         client = MongoClient(MONGO_URI)
         db = client["Corporatehealthcheckup"]
         cl_collection = db["core_investigationchecklist"]
-        emp_collection = db["core_employeeregistration"]
+        emp_collection = db["core_chcregistration"]
 
         query = {}
         if company_id and company_id != 'all' and company_id != '':

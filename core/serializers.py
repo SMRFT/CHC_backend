@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from bson import ObjectId
 import json
+from .models import CHCRegistration
 
 class ObjectIdField(serializers.Field):
     def to_representation(self, value):
@@ -40,6 +41,25 @@ class EmployeeRegistrationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmployeeRegistration
+        fields = '__all__'
+
+    def get_company_name(self, obj):
+        try:
+            if hasattr(obj, 'company_id') and obj.company_id:
+                from .models import Company
+                comp = Company.objects.filter(company_id=obj.company_id).first()
+                return comp.company_name if comp else "-"
+            return "-"
+        except:
+            return "-"
+
+class CHCRegistrationSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    barcode = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CHCRegistration
         fields = '__all__'
 
     def get_company_name(self, obj):

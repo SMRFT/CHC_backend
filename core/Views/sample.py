@@ -53,7 +53,7 @@ def _enrich_tests_with_container(tests: list) -> list:
         enriched.append(t)
     return enriched
 
-
+from ..models import CHCRegistration
 # ─────────────────────────────────────────────────────────────────────────────
 # Billing patients — returns ONLY patients who still have ≥1 Pending test.
 # testdetails in each result contains ONLY the pending tests, enriched with
@@ -139,9 +139,9 @@ def get_billing_patients(request):
             billing_dict["pending_test_count"] = len(pending_tests)
 
             try:
-                emp = EmployeeRegistration.objects.filter(barcode=billing.barcode).first()
+                emp = CHCRegistration.objects.filter(barcode=billing.barcode).first()
                 if not emp and billing.employee_id:
-                    emp = EmployeeRegistration.objects.filter(employee_id=billing.employee_id, company_id=billing.company_id).first()
+                    emp = CHCRegistration.objects.filter(employee_id=billing.employee_id, company_id=billing.company_id).first()
                     
                 if emp:
                     billing_dict["employee_name"] = emp.employee_name
@@ -149,8 +149,8 @@ def get_billing_patients(request):
                     billing_dict["gender"]        = emp.gender
                     billing_dict["department"]    = emp.department
                 else:
-                    raise EmployeeRegistration.DoesNotExist
-            except EmployeeRegistration.DoesNotExist:
+                    raise CHCRegistration.DoesNotExist
+            except CHCRegistration.DoesNotExist:
                 billing_dict.update({
                     "employee_name": "Unknown",
                     "age":           None,
@@ -258,12 +258,12 @@ def sample_management(request):
                     if sample_employee_id or sample_barcode:
                         try:
                             # Try lookup by barcode (PK) first
-                            emp = EmployeeRegistration.objects.filter(barcode=sample_barcode).first()
+                            emp = CHCRegistration.objects.filter(barcode=sample_barcode).first()
                             
                             # Fallback to employee_id if barcode didn't yield a result
                             if not emp and sample_employee_id:
                                 # Scope it to the sample's company_id
-                                emp = EmployeeRegistration.objects.filter(
+                                emp = CHCRegistration.objects.filter(
                                     employee_id=sample_employee_id, 
                                     company_id=sample.get("company_id")
                                 ).first()
@@ -277,8 +277,8 @@ def sample_management(request):
                                     "department":    emp.department or "Unknown",
                                 }
                             else:
-                                raise EmployeeRegistration.DoesNotExist
-                        except EmployeeRegistration.DoesNotExist:
+                                raise CHCRegistration.DoesNotExist
+                        except CHCRegistration.DoesNotExist:
                             employee_info["employee_id"] = sample_employee_id
 
                     sample_data.append({
@@ -677,7 +677,7 @@ def get_transferred_samples(request):
 
             # Get patient from EmployeeRegistration
             from ..models import EmployeeRegistration
-            patient = EmployeeRegistration.objects.filter(
+            patient = CHCRegistration.objects.filter(
                 employee_id=sample_employee_id
             ).first()
 
