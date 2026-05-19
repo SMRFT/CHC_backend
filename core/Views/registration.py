@@ -223,7 +223,8 @@ def register_employee_with_billing(request):
             "department": data.get("department") or None,
             "email": data.get("email") or None,
             "mobile": data.get("mobile"),
-            "created_date": timezone.now()
+            "created_date": timezone.now(),
+            "contractor": data.get("contractor") or None,
         }
 
         chc_serializer = CHCRegistrationSerializer(data=employee_payload)

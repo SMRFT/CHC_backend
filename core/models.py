@@ -65,6 +65,7 @@ class CHCRegistration(AuditModel):
     mobile = models.CharField(max_length=200, blank=True, null=True)
     doj = models.DateField(blank=True, null=True)
     experience = models.CharField(max_length=50, blank=True, null=True)
+    contractor = models.CharField(max_length=100, blank=True, null=True)
 
     def __str__(self):
         return f"{self.employee_id} ({self.barcode})"
@@ -179,6 +180,7 @@ class unregisteredEmployee(models.Model):
     company_id = models.CharField(max_length=20)
     designation = models.CharField(max_length=100, blank=True, null=True)
     employee_type = models.CharField(max_length=100, blank=True, null=True)
+    contractor = models.CharField(max_length=100, blank=True, null=True)
 
     def __str__(self):
         return f"{self.employee_id} ({self.employee_name})"
