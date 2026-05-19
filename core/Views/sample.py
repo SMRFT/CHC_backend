@@ -11,7 +11,7 @@ from collections import Counter
 from pymongo import MongoClient
 from django.db.models import Max
 
-from ..models import Billing, Sample, Batch, EmployeeRegistration
+from ..models import Billing, Sample, Batch, EmployeeRegistration,CHCRegistration
 from ..serializers import BillingSerializer, SampleSerializer, BatchSerializer
 
 
@@ -870,7 +870,7 @@ def batch_management(request):
             employee_info_map = {}  # { employee_id: { patient_id, patient_name } }
             if all_employee_ids:
                 try:
-                    for emp in EmployeeRegistration.objects.filter(
+                    for emp in CHCRegistration.objects.filter(
                         employee_id__in=all_employee_ids
                     ).values("employee_id", "employee_name"):
                         employee_info_map[emp["employee_id"]] = {
