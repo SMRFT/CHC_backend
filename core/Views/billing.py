@@ -42,7 +42,7 @@ def get_credit_billings(request):
         
         client = MongoClient(MONGO_URI)
         db = client[DB_NAME]
-        emp_collection = db["core_employeeregistration"]
+        emp_collection = db["core_chcregistration"]
         
         results = []
         for bill in billings:
@@ -164,7 +164,7 @@ def payment_report(request):
 
         client = MongoClient(MONGO_URI)
         db = client[DB_NAME]
-        emp_collection = db["core_employeeregistration"]
+        emp_collection = db["core_chcregistration"]
         
         results = []
         for bill in billings:

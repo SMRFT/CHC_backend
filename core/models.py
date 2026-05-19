@@ -50,6 +50,24 @@ class EmployeeRegistration(AuditModel):
     def __str__(self):
         return f"{self.employee_id} ({self.barcode})"
 
+class CHCRegistration(AuditModel):
+    company_id = models.CharField(max_length=20, default='')
+    barcode = models.CharField(max_length=20, primary_key=True)
+    employee_name = models.CharField(max_length=100)
+    employee_id = models.CharField(unique=True,max_length=20)
+    gender = models.CharField(max_length=10)
+    age = models.IntegerField()
+    dob = models.DateField(blank=True, null=True)
+    designation = models.CharField(max_length=100, blank=True, null=True)
+    employee_type = models.CharField(max_length=100, blank=True, null=True)
+    department = models.CharField(max_length=200, blank=True, null=True)
+    email = models.EmailField(max_length=200, blank=True, null=True)
+    mobile = models.CharField(max_length=200, blank=True, null=True)
+    doj = models.DateField(blank=True, null=True)
+    experience = models.CharField(max_length=50, blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.employee_id} ({self.barcode})"
 
 class Billing(AuditModel):
     company_id = models.CharField(max_length=20, default='')
