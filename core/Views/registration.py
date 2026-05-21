@@ -1474,10 +1474,20 @@ def get_investigation_checklists(request):
         fully_completed = 0
         test_counts = {} # { "PFT": { "total": 5, "completed": 2 }, ... }
 
+        company_cache = {}
         for cl in checklists:
             total_patients += 1
             emp = emp_collection.find_one({"employee_id": cl.get("employee_id")})
             
+            # Resolve company details
+            company_id = cl.get("company_id") or (emp.get("company_id") if emp else "CHC002")
+            company_name = emp.get("company_name") if emp else None
+            if not company_name or company_name == "-":
+                if company_id not in company_cache:
+                    comp_obj = Company.objects.filter(company_id=company_id).first()
+                    company_cache[company_id] = comp_obj.company_name if comp_obj else "-"
+                company_name = company_cache[company_id]
+
             # Robust checklist parsing
             checklist_data = cl.get("checklist", [])
             if isinstance(checklist_data, str):
@@ -1503,7 +1513,8 @@ def get_investigation_checklists(request):
 
             results.append({
                 "employee_id": cl.get("employee_id"),
-                "company_id": cl.get("company_id"),
+                "company_id": company_id,
+                "company_name": company_name or "-",
                 "employee_name": emp.get("employee_name", "-") if emp else "-",
                 "gender": emp.get("gender", "-") if emp else "-",
                 "age": emp.get("age", "-") if emp else "-",
