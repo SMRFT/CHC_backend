@@ -35,6 +35,7 @@ urlpatterns = [
     path("get_unregistered_employees/", registration.get_unregistered_employees, name="get_unregistered_employees"),
     path("get_employee_types/", registration.get_unique_employee_types, name="get_employee_types"),
     path("create_employee_type/", registration.create_employee_type, name="create_employee_type"),
+    path('bulk_upload_investigation_files/', registration.bulk_upload_investigation_files, name='bulk_upload_investigation_files'),
     path('registration/', security.registration, name='registration'),
     path('login/', security.login, name='login'),
     path('get_ophthalmology/', registration.get_ophthalmology),
