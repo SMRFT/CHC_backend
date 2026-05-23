@@ -27,12 +27,13 @@ def registration(request):
         role = request.data.get('role')
         password = request.data.get('password')
         confirm_password = request.data.get('confirmPassword')
+        company_id = request.data.get('company_id', '')
         if password != confirm_password:
             return Response({"error": "Passwords do not match"}, status=status.HTTP_400_BAD_REQUEST)
         if Register.objects.filter(name=name, role=role).exists():
             return Response({"error": "User with this name and role already exists"}, status=status.HTTP_400_BAD_REQUEST)
-        Register.objects.create(name=name, role=role, password=password)
-        return Response({"message": "Registration successful!"}, status=status.HTTP_201_CREATED)
+        Register.objects.create(name=name, role=role, password=password, company_id=company_id, is_active=False)
+        return Response({"message": "Registration successful! Account is pending activation."}, status=status.HTTP_201_CREATED)
     
     elif request.method == 'PUT':
         name = request.data.get('name')
@@ -94,10 +95,13 @@ def login(request):
     try:
         user = Register.objects.get(name=name)
         if user.password == password:
+            if not user.is_active:
+                return Response({"error": "Account is pending activation or inactive"}, status=status.HTTP_401_UNAUTHORIZED)
             return Response({
                 "message": f"Login successful as {user.role}, {user.name}",
                 "role": user.role,
-                "name": user.name
+                "name": user.name,
+                "company_id": user.company_id
             }, status=status.HTTP_200_OK)
         else:
             return Response({"error": "Invalid password"}, status=status.HTTP_401_UNAUTHORIZED)
