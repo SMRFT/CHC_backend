@@ -45,6 +45,7 @@ urlpatterns = [
     path('investigations/', views.get_investigations, name='get_investigations'),
     path('billings/', views.get_billings, name='get_billings'),
     path('dashboard-analytics/', views.get_dashboard_analytics, name='dashboard_analytics'),
+    path('bulk-sync-investigations/', views.bulk_sync_investigations, name='bulk_sync_investigations'),
 
     # company
     path("companies/", company.company_list_create, name="company_list_create"),

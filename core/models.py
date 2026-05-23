@@ -15,6 +15,9 @@ class Register(AuditModel):
     role = models.CharField(max_length=500)
     password = models.CharField(max_length=500)
     confirmPassword = models.CharField(max_length=500)
+    company_id = models.CharField(max_length=50, blank=True, null=True)
+    is_active = models.BooleanField(default=False)
+
 
 class Package(AuditModel):
     package_name = models.CharField(max_length=100, blank=True, null=True)
