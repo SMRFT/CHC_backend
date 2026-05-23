@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
@@ -146,7 +146,7 @@ def validate_barcode(request, barcode):
 
 
 
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
@@ -560,7 +560,7 @@ def get_test_details(request):
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 from pymongo import MongoClient
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
 from rest_framework import status
 
@@ -770,7 +770,7 @@ def get_all_registered_employees(request):
 
 
 
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
 from rest_framework import status
 from ..models import Investigation
@@ -871,7 +871,7 @@ def get_investigations(request):
 
 
 
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
 from rest_framework import status
 from ..models import Investigation
@@ -908,7 +908,7 @@ def approve_investigation(request, barcode):
     
 
 from django.http import HttpResponse, JsonResponse
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
 from rest_framework import status
 from pymongo import MongoClient
 import gridfs
@@ -1574,3 +1574,124 @@ def update_investigation_checklist(request):
         return Response({"status": "success", "message": "Checklist updated successfully"}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+def bulk_upload_investigation_files(request):
+    """
+    Uploads multiple files for a specific test_id across multiple investigations.
+    Extracts barcode from filename, matches it, and appends file to test_results.
+    """
+    client = MongoClient(MONGO_URI)
+    db = client["Corporatehealthcheckup"]
+    fs = gridfs.GridFS(db)
+    investigation_collection = db["core_investigation"]
+    
+    try:
+        test_id = request.data.get('test_id')
+        if not test_id:
+            return Response({'error': 'test_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        test_id_str = str(test_id).strip()
+        files = request.FILES.getlist('files')
+        if not files:
+            return Response({'error': 'No files provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        results = {
+            "total": len(files),
+            "success": 0,
+            "failed": 0,
+            "errors": [],
+            "success_details": []
+        }
+
+        for file_obj in files:
+            filename = file_obj.name
+            # Basic extraction: remove extension to get barcode. Adjust regex if needed based on format.
+            barcode = os.path.splitext(filename)[0].strip()
+            
+            # Find the investigation
+            investigation = investigation_collection.find_one({"barcode": barcode})
+            if not investigation:
+                results["failed"] += 1
+                results["errors"].append({"filename": filename, "error": f"Barcode {barcode} not found"})
+                continue
+                
+            # Upload file to GridFS
+            try:
+                fid = str(fs.put(file_obj.read(), filename=filename, content_type=file_obj.content_type))
+            except Exception as e:
+                results["failed"] += 1
+                results["errors"].append({"filename": filename, "error": f"Upload failed: {str(e)}"})
+                continue
+
+            # Update the specific test in test_results array
+            # If the test_id exists, $push the file id. 
+            # First check if the test_id is already in test_results
+            test_exists = False
+            for t in investigation.get("test_results", []):
+                if str(t.get("test_id", "")).strip() == test_id_str:
+                    test_exists = True
+                    break
+            
+            if test_exists:
+                # Append to existing test
+                update_result = investigation_collection.update_one(
+                    {"barcode": barcode, "test_results.test_id": test_id_str},
+                    {"$push": {"test_results.$.files": fid}}
+                )
+            else:
+                # Determine test name (you might want to fetch this from CHCTest model)
+                # For now using generic placeholder or fetch if needed
+                from core.models import CHCtest
+                test_obj = CHCtest.objects.filter(test_id=test_id_str).first()
+                test_name = test_obj.test_name if test_obj else "Unknown Test"
+
+                # Add new test result object
+                new_test = {
+                    "test_id": test_id_str,
+                    "test_name": test_name,
+                    "report": "",
+                    "files": [fid],
+                    "notes": ""
+                }
+                update_result = investigation_collection.update_one(
+                    {"barcode": barcode},
+                    {"$push": {"test_results": new_test}}
+                )
+            
+            if update_result.modified_count > 0:
+                results["success"] += 1
+                results["success_details"].append({"filename": filename, "barcode": barcode})
+            else:
+                # Rollback file? Ignoring for now to keep it simple, but good practice
+                results["failed"] += 1
+                results["errors"].append({"filename": filename, "error": "Database update failed"})
+
+        # Save the log to MongoDB
+        import datetime
+        log_entry = {
+            "timestamp": datetime.datetime.utcnow(),
+            "test_id": test_id_str,
+            "total_files": results["total"],
+            "success_count": results["success"],
+            "failed_count": results["failed"],
+            "success_details": results["success_details"],
+            "errors": results["errors"]
+        }
+        db["core_bulkuploadlog"].insert_one(log_entry)
+
+        # Convert ObjectId to string for JSON serialization
+        log_entry["_id"] = str(log_entry["_id"])
+
+        return Response({
+            "message": "Bulk upload processed",
+            "results": results,
+            "log": log_entry
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error in bulk_upload_investigation_files: {str(e)}\n{traceback.format_exc()}")
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        client.close()
