@@ -66,7 +66,9 @@ def get_investigations(request):
                     start_of_day = timezone.make_aware(start_of_day)
                     end_of_day = timezone.make_aware(end_of_day)
                     
-                query["date"] = {"$gte": start_of_day, "$lte": end_of_day}
+                billings = Billing.objects.filter(date__gte=start_of_day, date__lte=end_of_day)
+                barcodes = list(billings.values_list('barcode', flat=True))
+                query["barcode"] = {"$in": barcodes}
             except Exception as e:
                 logger.warning(f"Date parsing error in get_investigations (views.py): {e}")
 

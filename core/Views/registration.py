@@ -804,7 +804,13 @@ def get_investigations(request):
                     to_date = from_date
                 end_of_day = datetime.combine(to_date, datetime.max.time())
                 
-                query["date"] = {"$gte": start_of_day, "$lte": end_of_day}
+                if timezone.is_aware(timezone.now()):
+                    start_of_day = timezone.make_aware(start_of_day)
+                    end_of_day = timezone.make_aware(end_of_day)
+                
+                billings = Billing.objects.filter(date__gte=start_of_day, date__lte=end_of_day)
+                barcodes = list(billings.values_list('barcode', flat=True))
+                query["barcode"] = {"$in": barcodes}
             except Exception as e:
                 logger.warning(f"Date parsing error in get_investigations: {e}")
 
