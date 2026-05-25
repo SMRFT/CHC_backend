@@ -209,7 +209,7 @@ def register_employee_with_billing(request):
         # --- EmployeeRegistration ---
         employee_payload = {
             "employee_name": data.get("employee_name"),
-            "barcode": barcode,
+            # "barcode": barcode,
             "employee_id": employee_id,
             "gender": data.get("gender"),
             "age": data.get("age"),
@@ -228,11 +228,6 @@ def register_employee_with_billing(request):
         }
 
         chc_serializer = CHCRegistrationSerializer(data=employee_payload)
-        if not chc_serializer.is_valid():
-            return Response({"status": "error", "message": chc_serializer.errors},
-                            status=status.HTTP_400_BAD_REQUEST)
-        
-        chc_obj = chc_serializer.save()
 
         # --- Fetch Package Details from MongoDB if missing from payload ---
         package_id = data.get("package_id", "")
@@ -336,12 +331,25 @@ def register_employee_with_billing(request):
         }
 
         billing_serializer = BillingSerializer(data=billing_payload)
-        if not billing_serializer.is_valid():
-            chc_obj.delete()
-            return Response({"status": "error", "message": billing_serializer.errors},
+
+        # --- Validation of both serializers upfront ---
+        chc_valid = chc_serializer.is_valid()
+        billing_valid = billing_serializer.is_valid()
+
+        if not chc_valid or not billing_valid:
+            merged_errors = {}
+            if not chc_valid:
+                merged_errors.update(chc_serializer.errors)
+            if not billing_valid:
+                merged_errors.update(billing_serializer.errors)
+            return Response({"status": "error", "message": merged_errors},
                             status=status.HTTP_400_BAD_REQUEST)
-        
-        billing_obj = billing_serializer.save()
+
+        # Save both objects inside a database transaction block
+        from django.db import transaction
+        with transaction.atomic():
+            chc_obj = chc_serializer.save()
+            billing_obj = billing_serializer.save()
 
         # --- Initialize InvestigationChecklist ---
         try:
