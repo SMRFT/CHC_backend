@@ -55,7 +55,7 @@ class EmployeeRegistration(AuditModel):
 
 class CHCRegistration(AuditModel):
     company_id = models.CharField(max_length=20, default='')
-    # barcode = models.CharField(max_length=20, primary_key=True)
+    barcode = models.CharField(max_length=20, primary_key=True)
     employee_name = models.CharField(max_length=100)
     employee_id = models.CharField(unique=True,max_length=20)
     gender = models.CharField(max_length=10)
