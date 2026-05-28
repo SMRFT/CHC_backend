@@ -689,6 +689,7 @@ def get_all_employees(request):
                     "gender": employee.get("gender", ""),
                     "employee_id": employee.get("employee_id", ""),
                     "barcode": str(billing.barcode) if hasattr(billing, "barcode") else "",
+                    "company_id": c_id,
                     "company_name": c_name,
                     "created_date": employee.get("created_date", ""),
                     "billing_testdetails": [],
