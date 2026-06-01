@@ -613,7 +613,7 @@ def get_all_employees(request):
     client = MongoClient(MONGO_URI)
     db = client["Corporatehealthcheckup"]
     collection = db["core_chcregistration"]
-
+    investigation_collection = db["core_investigation"]
     from_date_str = request.GET.get('from_date')
     to_date_str = request.GET.get('to_date')
 
@@ -637,29 +637,65 @@ def get_all_employees(request):
             billings = billings.filter(date__gte=start_of_day, date__lte=end_of_day)
         except ValueError:
             pass
+
+    # Step 1: Bulk Fetch from PostgreSQL (Hash Join pattern)
+    # Pre-fetch all companies into a hash map
+    company_cache = {str(c.company_id): c.company_name for c in Company.objects.all()}
+
+    # Pre-fetch all tests into a hash map
+    test_dict = {
+        str(test.test_id).strip(): {
+            "is_fileuploaded": test.is_fileuploaded,
+            "is_notes": test.is_notes,
+            "is_report": test.is_report,
+            "notes": test.notes,
+            "report": test.report,
+            "is_active": test.is_active
+        }
+        for test in CHCtest.objects.all()
+    }
+
+    # Step 2: Bulk Fetch from MongoDB (Hash Join pattern)
+    # Fetch all employees with a projection to save memory/bandwidth
+    all_employees_cursor = collection.find(
+        {}, 
+        {"employee_id": 1, "employee_name": 1, "age": 1, "gender": 1, "company_id": 1, "company_name": 1, "created_date": 1, "_id": 0}
+    )
+    mongo_emp_cache = {str(emp.get("employee_id")): emp for emp in all_employees_cursor if emp.get("employee_id")}
+
+    # Fetch all investigations with a projection
+    all_investigations_cursor = investigation_collection.find(
+        {},
+        {"barcode": 1, "status": 1, "patient_history": 1, "test_results": 1, "dynamic_fields": 1, "vitals": 1, "CHCT001": 1, "visual_acuity": 1, "_id": 0}
+    )
+    mongo_inv_cache = {str(inv.get("barcode")): inv for inv in all_investigations_cursor if inv.get("barcode")}
+
+    # Step 3: Assemble Response entirely in memory (O(1) lookups)
     employees_map = {}
-    company_cache = {}
-    for billing in billings:
+    billings_list = list(billings)
+    
+    for billing in billings_list:
         emp_id = str(billing.employee_id)
+        
         if emp_id not in employees_map:
-            employee = collection.find_one({"employee_id": emp_id})
+            # O(1) Memory Lookup for Employee
+            employee = mongo_emp_cache.get(emp_id)
+
             if employee:
-                c_id = employee.get("company_id", "")
+                c_id = str(employee.get("company_id", ""))
                 c_name = employee.get("company_name", "")
                 if not c_name or c_name == "-":
-                    if c_id not in company_cache:
-                        comp_obj = Company.objects.filter(company_id=c_id).first()
-                        company_cache[c_id] = comp_obj.company_name if comp_obj else "-"
-                    c_name = company_cache[c_id]
+                    c_name = company_cache.get(c_id, "-")
 
                 # Fetch default dynamic fields from Billing record
                 dyn_fields = billing.dynamic_fields if hasattr(billing, 'dynamic_fields') else []
 
-                # --- Fetch Data from Investigation Collection ---
+                # O(1) Memory Lookup for Investigation
                 investigation_data = {}
-                try:
-                    investigation_collection = db["core_investigation"]
-                    inv_doc = investigation_collection.find_one({"barcode": str(billing.barcode)})
+                barcode_str = str(billing.barcode) if hasattr(billing, "barcode") else ""
+                
+                if barcode_str:
+                    inv_doc = mongo_inv_cache.get(barcode_str)
                     if inv_doc:
                         investigation_data = {
                             "status": inv_doc.get("status", "pending"),
@@ -669,8 +705,6 @@ def get_all_employees(request):
                             "vitals": inv_doc.get("vitals", {}),
                             "visual_acuity": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {})
                         }
-                except Exception as e:
-                    print(f"Error fetching investigation for {billing.barcode}: {e}")
 
                 # Use investigation dynamic fields if available, else billing defaults
                 final_dyn_fields = investigation_data.get("dynamic_fields") or dyn_fields
@@ -680,7 +714,7 @@ def get_all_employees(request):
                     "age": employee.get("age", ""),
                     "gender": employee.get("gender", ""),
                     "employee_id": employee.get("employee_id", ""),
-                    "barcode": str(billing.barcode) if hasattr(billing, "barcode") else "",
+                    "barcode": barcode_str,
                     "company_name": c_name,
                     "created_date": employee.get("created_date", ""),
                     "billing_testdetails": [],
@@ -697,30 +731,30 @@ def get_all_employees(request):
                 # Enrich test details with configuration
                 merged_billing_tests = billing.chctestdetails or []
                 if isinstance(merged_billing_tests, str):
-                    try: merged_billing_tests = json.loads(merged_billing_tests)
-                    except: merged_billing_tests = []
+                    try:
+                        merged_billing_tests = json.loads(merged_billing_tests)
+                    except:
+                        merged_billing_tests = []
                 
                 enriched_tests = []
                 for test in merged_billing_tests:
                     test_id = str(test.get("test_id", "")).strip()
-                    test_obj = CHCtest.objects.filter(test_id=test_id).first()
-                    if test_obj:
-                        test["is_fileuploaded"] = test_obj.is_fileuploaded
-                        test["is_notes"] = test_obj.is_notes
-                        test["is_report"] = test_obj.is_report
-                        test["notes"] = test_obj.notes
-                        test["report"] = test_obj.report
-                        test["is_active"] = test_obj.is_active
+                    test_info = test_dict.get(test_id)
+                    if test_info:
+                        test.update(test_info)
                     else:
-                        test["is_fileuploaded"] = False
-                        test["is_notes"] = False
-                        test["is_report"] = False
-                        test["notes"] = ""
-                        test["report"] = ""
-                        test["is_active"] = True
+                        test.update({
+                            "is_fileuploaded": False,
+                            "is_notes": False,
+                            "is_report": False,
+                            "notes": "",
+                            "report": "",
+                            "is_active": True
+                        })
                     enriched_tests.append(test)
                 
                 employees_map[emp_id]["billing_testdetails"] = enriched_tests
+
     return Response(list(employees_map.values()))
 
 
