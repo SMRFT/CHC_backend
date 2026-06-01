@@ -613,124 +613,307 @@ def get_packages(request):
 
 @api_view(["GET"])
 def get_all_employees(request):
-    """
-    Fetch all employees referenced in Billing.
-    Return only employee_name, age, gender, employee_id, barcode
-    """
-    # MongoDB connection
+
     client = MongoClient(MONGO_URI)
-    db = client["Corporatehealthcheckup"]
-    collection = db["core_chcregistration"]
 
-    from_date_str = request.GET.get('from_date')
-    to_date_str = request.GET.get('to_date')
+    try:
+        db = client["Corporatehealthcheckup"]
 
-    billings = Billing.objects.all().order_by('-date')
+        billing_collection = db["core_billing"]
+        registration_collection = db["core_chcregistration"]
+        investigation_collection = db["core_investigation"]
+        company_collection = db["core_company"]
 
-    if from_date_str:
-        try:
-            from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
-            start_of_day = datetime.combine(from_date, datetime.min.time())
-            
-            if to_date_str:
-                to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
-            else:
-                to_date = from_date
-            end_of_day = datetime.combine(to_date, datetime.max.time())
+        from_date = request.GET.get("from_date")
+        to_date = request.GET.get("to_date")
 
-            if timezone.is_aware(timezone.now()):
-                start_of_day = timezone.make_aware(start_of_day)
-                end_of_day = timezone.make_aware(end_of_day)
+        # ---------------------------------
+        # Billing Query
+        # ---------------------------------
 
-            billings = billings.filter(date__gte=start_of_day, date__lte=end_of_day)
-        except ValueError:
-            pass
-    employees_map = {}
-    company_cache = {}
-    for billing in billings:
-        emp_id = str(billing.employee_id)
-        if emp_id not in employees_map:
-            employee = collection.find_one({"employee_id": emp_id})
-            if employee:
-                c_id = employee.get("company_id", "")
-                c_name = employee.get("company_name", "")
-                if not c_name or c_name == "-":
-                    if c_id not in company_cache:
-                        comp_obj = Company.objects.filter(company_id=c_id).first()
-                        company_cache[c_id] = comp_obj.company_name if comp_obj else "-"
-                    c_name = company_cache[c_id]
+        billing_query = {}
 
-                # Fetch default dynamic fields from Billing record
-                dyn_fields = billing.dynamic_fields if hasattr(billing, 'dynamic_fields') else []
+        if from_date:
+            try:
 
-                # --- Fetch Data from Investigation Collection ---
-                investigation_data = {}
-                try:
-                    investigation_collection = db["core_investigation"]
-                    inv_doc = investigation_collection.find_one({"barcode": str(billing.barcode)})
-                    if inv_doc:
-                        investigation_data = {
-                            "status": inv_doc.get("status", "pending"),
-                            "patient_history": inv_doc.get("patient_history", ""),
-                            "test_results": inv_doc.get("test_results", []),
-                            "dynamic_fields": inv_doc.get("dynamic_fields", []),
-                            "vitals": inv_doc.get("vitals", {}),
-                            "visual_acuity": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {})
-                        }
-                except Exception as e:
-                    print(f"Error fetching investigation for {billing.barcode}: {e}")
+                start_date = datetime.strptime(
+                    from_date,
+                    "%Y-%m-%d"
+                )
 
-                # Use investigation dynamic fields if available, else billing defaults
-                final_dyn_fields = investigation_data.get("dynamic_fields") or dyn_fields
-                
-                employees_map[emp_id] = {
-                    "employee_name": employee.get("employee_name", ""),
-                    "age": employee.get("age", ""),
-                    "gender": employee.get("gender", ""),
-                    "employee_id": employee.get("employee_id", ""),
-                    "barcode": str(billing.barcode) if hasattr(billing, "barcode") else "",
-                    "company_id": c_id,
-                    "company_name": c_name,
-                    "created_date": employee.get("created_date", ""),
-                    "billing_testdetails": [],
-                    "dynamic_fields": final_dyn_fields,
-                    # Include existing investigation data
-                    "status": investigation_data.get("status", "pending"),
-                    "patient_history": investigation_data.get("patient_history", ""),
-                    "test_results_saved": investigation_data.get("test_results", []),
-                    "vitals": investigation_data.get("vitals", {}),
-                    "visual_acuity": investigation_data.get("visual_acuity", {}),
-                    "extra_barcode": getattr(billing, 'extra_barcode', 3)
+                if to_date:
+                    end_date = datetime.strptime(
+                        to_date,
+                        "%Y-%m-%d"
+                    )
+                else:
+                    end_date = start_date
+
+                billing_query["date"] = {
+                    "$gte": datetime.combine(
+                        start_date,
+                        datetime.min.time()
+                    ),
+                    "$lte": datetime.combine(
+                        end_date,
+                        datetime.max.time()
+                    )
                 }
-                
-                # Enrich test details with configuration
-                merged_billing_tests = billing.chctestdetails or []
-                if isinstance(merged_billing_tests, str):
-                    try: merged_billing_tests = json.loads(merged_billing_tests)
-                    except: merged_billing_tests = []
-                
-                enriched_tests = []
-                for test in merged_billing_tests:
-                    test_id = str(test.get("test_id", "")).strip()
-                    test_obj = CHCtest.objects.filter(test_id=test_id).first()
-                    if test_obj:
-                        test["is_fileuploaded"] = test_obj.is_fileuploaded
-                        test["is_notes"] = test_obj.is_notes
-                        test["is_report"] = test_obj.is_report
-                        test["notes"] = test_obj.notes
-                        test["report"] = test_obj.report
-                        test["is_active"] = test_obj.is_active
-                    else:
-                        test["is_fileuploaded"] = False
-                        test["is_notes"] = False
-                        test["is_report"] = False
-                        test["notes"] = ""
-                        test["report"] = ""
-                        test["is_active"] = True
-                    enriched_tests.append(test)
-                
-                employees_map[emp_id]["billing_testdetails"] = enriched_tests
-    return Response(list(employees_map.values()))
+
+            except Exception:
+                pass
+
+        billings = list(
+            billing_collection.find(
+                billing_query,
+                {
+                    "_id": 0,
+                    "employee_id": 1,
+                    "barcode": 1,
+                    "company_id": 1,
+                    "extra_barcode": 1
+                }
+            )
+        )
+
+        if not billings:
+            return Response([])
+
+        # ---------------------------------
+        # Collect Keys
+        # ---------------------------------
+
+        employee_ids = list({
+            str(b.get("employee_id"))
+            for b in billings
+            if b.get("employee_id")
+        })
+
+        barcodes = list({
+            str(b.get("barcode"))
+            for b in billings
+            if b.get("barcode")
+        })
+
+        company_ids = list({
+            str(b.get("company_id"))
+            for b in billings
+            if b.get("company_id")
+        })
+
+        # ---------------------------------
+        # Employees
+        # ---------------------------------
+
+        employees = registration_collection.find(
+            {
+                "employee_id": {
+                    "$in": employee_ids
+                }
+            },
+            {
+                "_id": 0,
+                "employee_id": 1,
+                "employee_name": 1,
+                "age": 1,
+                "gender": 1,
+                "department": 1,
+                "company_id": 1
+            }
+        )
+
+        employee_map = {
+            str(emp["employee_id"]): emp
+            for emp in employees
+        }
+
+        # ---------------------------------
+        # Investigations
+        # ---------------------------------
+
+        investigations = investigation_collection.find(
+            {
+                "barcode": {
+                    "$in": barcodes
+                }
+            },
+            {
+                "_id": 0,
+                "barcode": 1,
+                "status": 1,
+                "patient_history": 1,
+                "test_results": 1,
+                "dynamic_fields": 1,
+                "vitals": 1,
+                "CHCT001": 1,
+                "date": 1
+            }
+        )
+
+        investigation_map = {
+            str(inv["barcode"]): inv
+            for inv in investigations
+        }
+
+        # ---------------------------------
+        # Companies
+        # ---------------------------------
+
+        companies = company_collection.find(
+            {
+                "company_id": {
+                    "$in": company_ids
+                }
+            },
+            {
+                "_id": 0,
+                "company_id": 1,
+                "company_name": 1
+            }
+        )
+
+        company_map = {
+            str(c["company_id"]): c["company_name"]
+            for c in companies
+        }
+
+        # ---------------------------------
+        # Response
+        # ---------------------------------
+
+        response_data = []
+
+        for billing in billings:
+
+            employee_id = str(
+                billing.get("employee_id", "")
+            )
+
+            barcode = str(
+                billing.get("barcode", "")
+            )
+
+            company_id = str(
+                billing.get("company_id", "")
+            )
+
+            employee = employee_map.get(
+                employee_id,
+                {}
+            )
+
+            investigation = investigation_map.get(
+                barcode,
+                {}
+            )
+
+            response_data.append({
+
+                "employee_id":
+                    employee_id,
+
+                "employee_name":
+                    employee.get(
+                        "employee_name",
+                        ""
+                    ),
+
+                "age":
+                    employee.get(
+                        "age",
+                        ""
+                    ),
+
+                "gender":
+                    employee.get(
+                        "gender",
+                        ""
+                    ),
+
+                "department":
+                    employee.get(
+                        "department",
+                        ""
+                    ),
+
+                "barcode":
+                    barcode,
+
+                "company_id":
+                    company_id,
+
+                "company_name":
+                    company_map.get(
+                        company_id,
+                        "-"
+                    ),
+
+                "status":
+                    investigation.get(
+                        "status",
+                        "pending"
+                    ),
+
+                "patient_history":
+                    investigation.get(
+                        "patient_history",
+                        ""
+                    ),
+
+                "test_results":
+                    investigation.get(
+                        "test_results",
+                        []
+                    ),
+
+                "dynamic_fields":
+                    investigation.get(
+                        "dynamic_fields",
+                        []
+                    ),
+
+                "vitals":
+                    investigation.get(
+                        "vitals",
+                        {}
+                    ),
+
+                "visual_acuity":
+                    investigation.get(
+                        "CHCT001",
+                        {}
+                    ),
+
+                "date":
+                    investigation.get(
+                        "date"
+                    ),
+
+                "extra_barcode":
+                    billing.get(
+                        "extra_barcode",
+                        3
+                    )
+            })
+
+        return Response(
+            response_data,
+            status=status.HTTP_200_OK
+        )
+
+    except Exception as e:
+
+        logger.error(
+            f"Error: {str(e)}\n{traceback.format_exc()}"
+        )
+
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    finally:
+        client.close()
 
 
 @api_view(["GET"])
