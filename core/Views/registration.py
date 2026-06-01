@@ -625,7 +625,7 @@ def get_all_employees(request):
     registration_collection = db["core_chcregistration"]
     investigation_collection = db["core_investigation"]
     company_collection = db["core_company"]
-
+    billings = Billing.objects.all()
     if from_date_str:
         try:
             from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
