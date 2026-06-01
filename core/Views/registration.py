@@ -621,10 +621,10 @@ def get_all_employees(request):
     from_date_str = request.GET.get('from_date')
     to_date_str = request.GET.get('to_date')
 
-        billing_collection = db["core_billing"]
-        registration_collection = db["core_chcregistration"]
-        investigation_collection = db["core_investigation"]
-        company_collection = db["core_company"]
+    billing_collection = db["core_billing"]
+    registration_collection = db["core_chcregistration"]
+    investigation_collection = db["core_investigation"]
+    company_collection = db["core_company"]
 
     if from_date_str:
         try:
