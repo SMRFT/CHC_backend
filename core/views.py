@@ -58,19 +58,20 @@ def get_investigations(request):
     try:
         query = {}
         if company_id:
-            # Sync company_id from SQL to MongoDB if not already present
-            employees = EmployeeRegistration.objects.filter(company_id=company_id).values_list('barcode', flat=True)
-            barcode_list = list(employees)
+            # Get barcodes from Billing where company_id exists
+            billings = Billing.objects.filter(company_id=company_id).values_list('barcode', flat=True)
+            barcode_list = list(billings)
             
-            # Update matching records in MongoDB to set company_id for future fast lookups
             if barcode_list:
+                # Set company_id in investigations if missing, just for consistency
                 investigation_collection.update_many(
                     {"barcode": {"$in": barcode_list}, "company_id": {"$exists": False}},
                     {"$set": {"company_id": company_id}}
                 )
-            
-            # Now query directly by company_id (more efficient than large $in: barcode_list)
-            query["company_id"] = company_id
+                query["barcode"] = {"$in": barcode_list}
+            else:
+                # If no barcodes found in billings, return nothing
+                query["barcode"] = {"$in": []}
             
         if from_date:
             try:
@@ -163,14 +164,16 @@ def get_dashboard_analytics(request):
             
         # Sync company_id from SQL to MongoDB if not already present
         if company_id:
-            employees = EmployeeRegistration.objects.filter(company_id=company_id).values_list('barcode', flat=True)
-            barcode_list = list(employees)
+            billings = Billing.objects.filter(company_id=company_id).values_list('barcode', flat=True)
+            barcode_list = list(billings)
             if barcode_list:
                 investigation_collection.update_many(
                     {"barcode": {"$in": barcode_list}, "company_id": {"$exists": False}},
                     {"$set": {"company_id": company_id}}
                 )
-            inv_query = {"company_id": company_id}
+                inv_query = {"barcode": {"$in": barcode_list}}
+            else:
+                inv_query = {"barcode": {"$in": []}}
         else:
             inv_query = {}
             
@@ -239,9 +242,9 @@ def bulk_sync_investigations(request):
             if not cid:
                 continue
                 
-            # Get all barcodes for this company
-            employees = EmployeeRegistration.objects.filter(company_id=cid).values_list('barcode', flat=True)
-            barcode_list = list(employees)
+            # Get all barcodes for this company from Billing
+            billings = Billing.objects.filter(company_id=cid).values_list('barcode', flat=True)
+            barcode_list = list(billings)
             
             if barcode_list:
                 # Update by barcode
@@ -253,8 +256,8 @@ def bulk_sync_investigations(request):
                     sync_results[f"{cid}_barcode"] = res.modified_count
                     total_modified += res.modified_count
 
-            # Fallback: Update by employee_id for orphaned records
-            employee_ids = EmployeeRegistration.objects.filter(company_id=cid).values_list('employee_id', flat=True)
+            # Fallback: Update by employee_id for orphaned records from Billing
+            employee_ids = Billing.objects.filter(company_id=cid).values_list('employee_id', flat=True)
             emp_id_list = list(employee_ids)
             if emp_id_list:
                 res_emp = investigation_collection.update_many(
