@@ -4,6 +4,8 @@ from core import views
 from .Views import sample,package,registration,security, company, billing, investigation_fields
 
 urlpatterns = [
+    path("export_company_diagnostics/<str:company_id>/", registration.export_company_diagnostics, name="export_company_diagnostics"),
+
 
     path('check_barcode_exists/', registration.check_barcode_exists, name='check_barcode_exists'),
     path("get_core_test/", package.get_core_test, name="get_core_test"),
