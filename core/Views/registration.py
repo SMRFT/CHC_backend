@@ -1742,3 +1742,186 @@ def bulk_upload_investigation_files(request):
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     finally:
         client.close()
+
+@api_view(['GET'])
+def export_company_diagnostics(request, company_id):
+    try:
+        # Fetch from PostgreSQL Billing to ensure we only get billed employees
+        from ..models import Billing
+        billings = Billing.objects.filter(company_id=company_id)
+        barcodes = [b.barcode for b in billings if b.barcode]
+
+        client = MongoClient(MONGO_URI)
+        chc_db = client['Corporatehealthcheckup']
+        diag_db = client['Diagnostics']
+        
+        # 1. Fetch Employees for those billed employees
+        employee_ids = [b.employee_id for b in billings if b.employee_id]
+        employees_cursor = chc_db['core_chcregistration'].find(
+            {"employee_id": {"$in": employee_ids}, "company_id": company_id},
+            {"_id": 0, "employee_id": 1, "employee_name": 1, "age": 1, "designation": 1}
+        )
+        emp_map = {emp.get("employee_id"): emp for emp in employees_cursor if emp.get("employee_id")}
+        
+        # 2. Fetch Diagnostics for those barcodes
+        test_values_cursor = diag_db['core_testvalue'].find(
+            {"barcode": {"$in": barcodes}},
+            {"_id": 0, "barcode": 1, "testdetails": 1}
+        )
+        
+        # 2.5 Fetch core_testdetails for dynamic test_code to test_name mapping
+        test_master_cache = {}
+        for td in diag_db['core_testdetails'].find({}, {"_id": 0, "test_id": 1, "parameters": 1}):
+            t_id = td.get("test_id")
+            if not t_id: continue
+            
+            code_to_name = {}
+            params_data = td.get("parameters", [])
+            param_list = []
+            
+            if isinstance(params_data, list):
+                param_list = params_data
+            elif isinstance(params_data, dict):
+                for dev_params in params_data.values():
+                    if isinstance(dev_params, list):
+                        param_list.extend(dev_params)
+            
+            for param in param_list:
+                if not isinstance(param, dict): continue
+                code = str(param.get("test_code", "")).lower().strip()
+                name = str(param.get("test_name", "")).lower().strip()
+                if code and name:
+                    code_to_name[code] = name
+            
+            test_master_cache[t_id] = code_to_name
+        
+        test_values_map = {}
+        for tv in test_values_cursor:
+            barcode = tv.get("barcode")
+            try:
+                testdetails = json.loads(tv.get("testdetails", "[]"))
+            except Exception:
+                testdetails = []
+                
+            if barcode not in test_values_map:
+                test_values_map[barcode] = {
+                    "HB": "", "TC": "", "PCV": "", "PLATELET": "", "T.CHOL": "", 
+                    "TGL": "", "HDL": "", "LDL": "", "VLDL": "", "FBS": "", 
+                    "PPBS": "", "UREA": "", "CR": "", "U.SUGAR": "", "U.ALBU": ""
+                }
+            
+            extracted_data = test_values_map[barcode]
+            param_mapping = {
+                # Test Codes / Names (Exact match)
+                "haemoglobin": "HB", "hb": "HB", "hgb": "HB",
+                "total wbc count": "TC", "tc": "TC", "wbc": "TC",
+                "haemetocrit": "PCV", "haemetocrit - hct": "PCV", "hct": "PCV", "pcv": "PCV",
+                "platelet count": "PLATELET", "plt": "PLATELET", "platelet": "PLATELET",
+                
+                "cholesterol (total)": "T.CHOL", "total cholesterol": "T.CHOL", "13": "T.CHOL",
+                "triglycerides - tgl": "TGL", "triglycerides": "TGL", "14": "TGL",
+                "cholesterol - hdl": "HDL", "hdl-cholesterol": "HDL", "15": "HDL",
+                "ldl": "LDL", "18": "LDL",
+                "vldl - cholesterol": "VLDL", "testcode003": "VLDL",
+                
+                "urea": "UREA", "blood urea": "UREA", "02": "UREA",
+                "creatinine": "CR", "serum creatinine": "CR", "03": "CR", "creatinine (sarcosine oxidase method)": "CR",
+                
+                "glucose (urine)": "U.SUGAR", "urine sugar": "U.SUGAR", "glu": "U.SUGAR",
+                "protein (urine)": "U.ALBU", "urine albumin": "U.ALBU", "pro": "U.ALBU"
+            }
+            
+            for test in testdetails:
+                if not isinstance(test, dict): continue
+                test_id = test.get("test_id")
+                params = test.get("parameters", [])
+                
+                for p in params:
+                    if not isinstance(p, dict): continue
+                    p_code = str(p.get("test_code", "")).lower().strip()
+                    p_val = p.get("value", "")
+                    
+                    if test_id == 47: # FBS
+                        extracted_data["FBS"] = p_val
+                        continue
+                    if test_id == 4: # PPBS
+                        extracted_data["PPBS"] = p_val
+                        continue
+                    if test_id == 15: # Urea
+                        extracted_data["UREA"] = p_val
+                        continue
+                    if test_id == 44: # Creatinine
+                        extracted_data["CR"] = p_val
+                        continue
+                    if test_id == 9: # RBS (mapped to U.SUGAR fallback if needed, but keeping separate if not requested)
+                        pass
+                        
+                    # Dynamically lookup name from core_testdetails using test_id and test_code
+                    dynamic_name = ""
+                    if test_id and p_code:
+                        dynamic_name = test_master_cache.get(test_id, {}).get(p_code, "")
+                        
+                    p_name = dynamic_name or str(p.get("name", "")).lower().strip()
+                    
+                    if p_name in param_mapping:
+                        extracted_data[param_mapping[p_name]] = p_val
+                    elif p_code in param_mapping:
+                        extracted_data[param_mapping[p_code]] = p_val
+                            
+            test_values_map[barcode] = extracted_data
+            
+        # 3. Assemble Final Output
+        final_data = []
+        for idx, billing in enumerate(billings, start=1):
+            barcode = billing.barcode
+            emp_id = billing.employee_id
+            emp = emp_map.get(emp_id, {})
+            diag = test_values_map.get(barcode, {})
+            
+            row = {
+                "Sl.No": idx,
+                "Emp No": emp_id,
+                "Employee Name": emp.get("employee_name", ""),
+                "AGE": emp.get("age", ""),
+                "designation": emp.get("designation", ""),
+                "HB": diag.get("HB", ""),
+                "TC": diag.get("TC", ""),
+                "PCV": diag.get("PCV", ""),
+                "PLATELET": diag.get("PLATELET", ""),
+                "T.CHOL": diag.get("T.CHOL", ""),
+                "TGL": diag.get("TGL", ""),
+                "HDL": diag.get("HDL", ""),
+                "LDL": diag.get("LDL", ""),
+                "VLDL": diag.get("VLDL", ""),
+                "FBS": diag.get("FBS", ""),
+                "PPBS": diag.get("PPBS", ""),
+                "UREA": diag.get("UREA", ""),
+                "CR": diag.get("CR", ""),
+                "U.SUGAR": diag.get("U.SUGAR", ""),
+                "U.ALBU": diag.get("U.ALBU", "")
+            }
+            final_data.append(row)
+            
+        if request.GET.get('export') == 'csv':
+            import csv
+            from django.http import HttpResponse
+            
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = f'attachment; filename="diagnostics_export_{company_id}.csv"'
+            
+            if final_data:
+                headers = list(final_data[0].keys())
+                writer = csv.DictWriter(response, fieldnames=headers)
+                writer.writeheader()
+                for r in final_data:
+                    writer.writerow(r)
+            return response
+            
+        return Response(final_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error in export_company_diagnostics: {str(e)}\n{traceback.format_exc()}")
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        client.close()
+
