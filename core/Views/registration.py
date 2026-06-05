@@ -1034,6 +1034,64 @@ def delete_file_from_investigation(request):
     finally:
         client.close()
 
+@api_view(['POST'])
+def update_investigation_test(request):
+    """
+    Update notes and report for a specific test in an investigation.
+    Expected payload: { "barcode": "...", "test_id": "...", "report": "...", "notes": "..." }
+    """
+    try:
+        data = request.data
+        barcode = data.get("barcode")
+        test_id = data.get("test_id")
+        report = data.get("report", "").strip()
+        notes = data.get("notes", "").strip()
+
+        if not barcode or test_id is None:
+            return Response({"error": "barcode and test_id are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        client = MongoClient(MONGO_URI)
+        db = client["Corporatehealthcheckup"]
+        investigation_collection = db["core_investigation"]
+
+        # Find the investigation
+        inv = investigation_collection.find_one({"barcode": barcode})
+        if not inv:
+            client.close()
+            return Response({"error": "Investigation not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        test_results = inv.get("test_results", [])
+        if isinstance(test_results, str):
+            try: test_results = json.loads(test_results)
+            except: test_results = []
+
+        # Find and update the specific test
+        test_found = False
+        for test in test_results:
+            curr_tid = test.get("test_id")
+            if str(curr_tid).strip() == str(test_id).strip():
+                test["report"] = report
+                test["notes"] = notes
+                test_found = True
+                break
+
+        if not test_found:
+            client.close()
+            return Response({"error": f"Test ID {test_id} not found in this investigation"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Update the database
+        investigation_collection.update_one(
+            {"barcode": barcode},
+            {"$set": {"test_results": test_results}}
+        )
+
+        client.close()
+        return Response({"status": "success", "message": "Test updated successfully"}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error in update_investigation_test: {str(e)}\n{traceback.format_exc()}")
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 # ----------------------------
 # Get all Ophthalmology records + auto-approve pending
 # ----------------------------
