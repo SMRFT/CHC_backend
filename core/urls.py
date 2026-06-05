@@ -29,6 +29,7 @@ urlpatterns = [
     path('get_investigations/', registration.get_investigations, name='get_investigations'),
     path('get_file/<str:file_id>/', registration.get_file, name='get_file'),
     path('delete_file_from_investigation/', registration.delete_file_from_investigation, name='delete_file_from_investigation'),
+    path('update_investigation_test/', registration.update_investigation_test, name='update_investigation_test'),
     path("get_packages/",registration.get_packages, name="get_packages"),
     path("chc_empregisterandbilling/",registration.register_employee_with_billing,name="register_employee_with_billing"),
     path("get_next_offsite_barcode/", registration.get_next_offsite_barcode, name="get_next_offsite_barcode"),
