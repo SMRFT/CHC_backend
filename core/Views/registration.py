@@ -849,8 +849,8 @@ def get_investigations(request):
                     start_of_day = timezone.make_aware(start_of_day)
                     end_of_day = timezone.make_aware(end_of_day)
                 
-                registrations = CHCRegistration.objects.filter(created_date__gte=start_of_day, created_date__lte=end_of_day)
-                barcodes = list(registrations.values_list('barcode', flat=True))
+                billings = Billing.objects.filter(date__gte=start_of_day, date__lte=end_of_day)
+                barcodes = list(billings.values_list('barcode', flat=True))
                 query["barcode"] = {"$in": barcodes}
             except Exception as e:
                 logger.warning(f"Date parsing error in get_investigations: {e}")
