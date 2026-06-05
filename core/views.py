@@ -93,9 +93,16 @@ def get_investigations(request):
             except Exception as e:
                 logger.warning(f"Date parsing error in get_investigations (views.py): {e}")
 
-        cursor = investigation_collection.find(query).sort("date", -1)
+        # Fetch using PyMongo
+        investigations_list = list(investigation_collection.find(query).sort("date", -1))
+        
+        # Get billing dates for all barcodes
+        barcodes = [inv.get("barcode") for inv in investigations_list if inv.get("barcode")]
+        billings = Billing.objects.filter(barcode__in=barcodes)
+        billing_date_map = {b.barcode: b.date for b in billings}
+
         data = []
-        for inv in cursor:
+        for inv in investigations_list:
             # Robust JSON handling
             vitals = inv.get('vitals', {})
             if isinstance(vitals, str):
@@ -107,13 +114,17 @@ def get_investigations(request):
                 try: test_results = json.loads(test_results)
                 except: test_results = []
 
+            # Use billing date if available, fallback to investigation date
+            bill_date = billing_date_map.get(inv.get('barcode'))
+            display_date = bill_date if bill_date else inv.get('date')
+
             data.append({
                 'employee_id': inv.get('employee_id'),
                 'vitals': vitals,
                 'gender': inv.get('gender'),
                 'age': inv.get('age'),
                 'barcode': inv.get('barcode'),
-                'date': inv.get('date'),
+                'date': display_date,
                 'status': inv.get('status', 'pending'),
                 'patient_history': inv.get('patient_history', ''),
                 'test_results': test_results,

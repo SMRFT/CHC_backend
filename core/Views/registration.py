@@ -856,11 +856,16 @@ def get_investigations(request):
                 logger.warning(f"Date parsing error in get_investigations: {e}")
 
         # Fetch using PyMongo
-        cursor = investigation_collection.find(query).sort("date", -1)
+        investigations_list = list(investigation_collection.find(query).sort("date", -1))
         
+        # Get billing dates for all barcodes
+        barcodes = [inv.get("barcode") for inv in investigations_list if inv.get("barcode")]
+        billings = Billing.objects.filter(barcode__in=barcodes)
+        billing_date_map = {b.barcode: b.date for b in billings}
+
         data = []
         company_cache = {}
-        for inv in cursor:
+        for inv in investigations_list:
             # Match full employee details from registration
             emp_id = inv.get("employee_id")
             emp = employee_collection.find_one({"employee_id": emp_id})
@@ -890,6 +895,10 @@ def get_investigations(request):
                 try: test_results = json.loads(test_results)
                 except: test_results = []
 
+            # Use billing date if available, fallback to investigation date
+            bill_date = billing_date_map.get(inv.get('barcode'))
+            display_date = bill_date if bill_date else inv.get('date')
+
             data.append({
                 'employee_id': emp_id,
                 'employee_name': emp_name,
@@ -898,7 +907,7 @@ def get_investigations(request):
                 'age': age,
                 'department': department,
                 'barcode': inv.get('barcode'),
-                'date': inv.get('date'),
+                'date': display_date,
                 'status': inv.get('status', 'pending'),
                 'patient_history': inv.get('patient_history', ''),
                 'test_results': test_results,
@@ -1339,11 +1348,16 @@ def get_ophthalmology(request):
                 logger.warning(f"Date error in get_ophthalmology: {date_err}")
 
         # Fetch records
-        cursor = investigation_collection.find(query).sort("date", -1)
+        investigations_list = list(investigation_collection.find(query).sort("date", -1))
         
+        # Get billing dates for all barcodes
+        barcodes = [inv.get("barcode") for inv in investigations_list if inv.get("barcode")]
+        billings = Billing.objects.filter(barcode__in=barcodes)
+        billing_date_map = {b.barcode: b.date for b in billings}
+
         results = []
 
-        for inv in cursor:
+        for inv in investigations_list:
             # Check if has visual_acuity or OPHTHALMOLOGY test
             test_results = inv.get("test_results", [])
             if isinstance(test_results, str):
@@ -1362,13 +1376,17 @@ def get_ophthalmology(request):
                 gender = emp.get("gender", "-") if emp else "-"
                 age = emp.get("age", "-") if emp else "-"
 
+                # Use billing date if available, fallback to investigation date
+                bill_date = billing_date_map.get(inv.get('barcode'))
+                display_date = bill_date if bill_date else inv.get('date')
+
                 results.append({
                     'barcode': inv.get('barcode'),
                     'employee_id': emp_id,
                     'employee_name': emp_name,
                     'gender': gender,
                     'age': age,
-                    'date': inv.get('date'),
+                    'date': display_date,
                     'status': inv.get('status', 'pending'),
                     'visual_acuity': inv.get('visual_acuity', {}),
                     'patient_history': inv.get('patient_history', '')
