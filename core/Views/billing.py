@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 from ..models import Billing, EmployeeRegistration, Company
@@ -11,6 +11,7 @@ import traceback
 import decimal
 from pymongo import MongoClient
 import os
+from pyauth.auth import HasRolePermission
 
 logger = logging.getLogger(__name__)
 MONGO_URI = os.getenv("GLOBAL_DB_HOST")
@@ -25,6 +26,7 @@ def safe_float(value):
         return 0.0
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_credit_billings(request):
     """
     Fetch all billing records with paymentMode='Credit'.
@@ -81,6 +83,7 @@ def get_credit_billings(request):
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
+@permission_classes([HasRolePermission])
 def mark_as_paid(request):
     """
     Update a billing record's paymentMode to 'Paid'.
@@ -139,6 +142,7 @@ def mark_as_paid(request):
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST', 'GET'])
+@permission_classes([HasRolePermission])
 def payment_report(request):
     """
     Fetch all 'Paid' billing records within a date range.

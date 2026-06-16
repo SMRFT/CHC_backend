@@ -24,6 +24,7 @@ urlpatterns = [
     
     # Batch URLs
     path('batch/', sample.batch_management, name='batch_management'),    
+    
     path("save_investigation/",registration.save_investigation, name="save_investigation"),
     path('approve_investigation/<str:barcode>/', registration.approve_investigation, name='approve_investigation'),
     path('get_investigations/', registration.get_investigations, name='get_investigations'),

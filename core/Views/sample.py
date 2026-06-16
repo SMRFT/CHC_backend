@@ -1,5 +1,5 @@
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.db import transaction
 from django.utils import timezone
@@ -13,7 +13,7 @@ from django.db.models import Max
 
 from ..models import Billing, Sample, Batch, EmployeeRegistration,CHCRegistration
 from ..serializers import BillingSerializer, SampleSerializer, BatchSerializer
-
+from pyauth.auth import HasRolePermission
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: open a single shared MongoDB client per request and fetch
@@ -60,6 +60,7 @@ from ..models import CHCRegistration
 # collection_container from core_testdetails.
 # ─────────────────────────────────────────────────────────────────────────────
 @api_view(["GET"])
+@permission_classes([HasRolePermission])
 def get_billing_patients(request):
     from_date_str = request.GET.get("from_date") or request.GET.get("date")
     to_date_str   = request.GET.get("to_date")
@@ -183,6 +184,7 @@ def get_billing_patients(request):
 # PATCH: mark tests as Transferred
 # ─────────────────────────────────────────────────────────────────────────────
 @api_view(["GET", "POST", "PATCH"])
+@permission_classes([HasRolePermission])
 def sample_management(request):
 
     # ── GET ───────────────────────────────────────────────────────────────────
@@ -542,6 +544,7 @@ def sample_management(request):
 # GET transferred samples  (CHC version)
 # ─────────────────────────────────────────────────────────────────────────────
 @api_view(["GET"])
+@permission_classes([HasRolePermission])
 def get_transferred_samples(request):
     """
     Returns samples whose testdetails contain at least one test with
@@ -724,6 +727,7 @@ def get_transferred_samples(request):
 # Batch management  (CHC version)
 # ─────────────────────────────────────────────────────────────────────────────
 @api_view(["GET", "POST"])
+@permission_classes([HasRolePermission])
 def batch_management(request):
 
     # ══════════════════════════════════════════════════════════════════════════
