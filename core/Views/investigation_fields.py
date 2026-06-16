@@ -1,4 +1,5 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from pyauth.auth import HasRolePermission
 from rest_framework.response import Response
 from rest_framework import status
 from ..models import DynamicInvestigationFields, AddOnInvestigation
@@ -21,7 +22,9 @@ def get_mongodb_collections():
     }
 
 @api_view(['GET', 'POST'])
+@permission_classes([HasRolePermission])
 def dynamic_fields_list_create(request):
+    
     if request.method == 'GET':
         mongo = get_mongodb_collections()
         try:
@@ -88,6 +91,7 @@ def get_next_dynamic_field_id(request):
         mongo["client"].close()
 
 @api_view(['GET', 'POST'])
+
 def addon_investigation_list_create(request):
     if request.method == 'GET':
         mongo = get_mongodb_collections()

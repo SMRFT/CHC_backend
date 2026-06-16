@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 from pymongo import MongoClient
@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from datetime import datetime, time
 import logging
 import traceback
+from pyauth.auth import HasRolePermission
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ MONGO_URI = os.getenv("GLOBAL_DB_HOST")
 DB_NAME = "Corporatehealthcheckup"
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_approval_dashboard(request):
     client = MongoClient(MONGO_URI)
     try:
@@ -205,6 +207,7 @@ def get_approval_dashboard(request):
 
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_approval_report(request):
     client = MongoClient(MONGO_URI)
     try:

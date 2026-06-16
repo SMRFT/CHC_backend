@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 from .models import EmployeeRegistration, Billing, Investigation
@@ -11,7 +11,7 @@ import traceback
 import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
-
+from pyauth.auth import HasRolePermission
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ DB_NAME = "Corporatehealthcheckup"
 
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_employees(request):
     company_id = request.query_params.get('company_id')
     if company_id:
@@ -42,6 +43,7 @@ def get_employees(request):
     return Response(data)
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_investigations(request):
     """
     Dashboard analytics version of get_investigations.
@@ -139,6 +141,7 @@ def get_investigations(request):
         client.close()
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_billings(request):
     company_id = request.query_params.get('company_id')
     if company_id:

@@ -6,9 +6,23 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+    
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    environment = os.getenv('ENV_CLASSIFICATION', 'local')
+
+    print(f"Initializing environment: {environment}" )
+
+    if environment == 'prod':
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings-prod')
+    elif environment == 'test':
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings-test')
+    else:
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
     try:
         from django.core.management import execute_from_command_line
+
     except ImportError as exc:
         raise ImportError(
             "Couldn't import Django. Are you sure it's installed and "

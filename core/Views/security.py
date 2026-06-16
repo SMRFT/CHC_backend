@@ -90,20 +90,114 @@ def registration(request):
 
 @api_view(['POST'])
 def login(request):
-    name = request.data.get('name')
+    import traceback
+    from .. import jwt_gen
+    from bson import ObjectId
+
+    client = MongoClient(os.getenv('GLOBAL_DB_HOST'))
+    db = client['Corporatehealthcheckup']
+    register_collection = db['core_register']
+    role_collection = db['core_rolemapping']
+
+    username = request.data.get('username') or request.data.get('name')
     password = request.data.get('password')
+
+    if not username:
+        return Response({'error': 'Username is required'}, status=status.HTTP_400_BAD_REQUEST)
+    if not password:
+        return Response({'error': 'Password is required'}, status=status.HTTP_400_BAD_REQUEST)
+
     try:
-        user = Register.objects.get(name=name)
-        if user.password == password:
-            if not user.is_active:
-                return Response({"error": "Account is pending activation or inactive"}, status=status.HTTP_401_UNAUTHORIZED)
-            return Response({
-                "message": f"Login successful as {user.role}, {user.name}",
-                "role": user.role,
-                "name": user.name,
-                "company_id": user.company_id
-            }, status=status.HTTP_200_OK)
+        # User fetch from mongo
+        user_data = register_collection.find_one({
+            "$or": [
+                {"name": username},
+                {"name": username.lower()},
+                {"name": username.capitalize()}
+            ],
+            "password": password
+        })
+
+        if not user_data:
+            try:
+                user_data = register_collection.find_one({
+                    "_id": ObjectId(username),
+                    "password": password
+                })
+            except Exception:
+                user_data = None
+
+        if not user_data:
+            return Response({'error': 'Invalid username or password'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not user_data.get('is_active', False):
+            return Response({'error': 'Account is pending activation or inactive'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        role_code = user_data.get("role_code")
+        if not role_code:
+            role = user_data.get("role", "")
+            if role == "Admin":
+                role_code = "CHC-R-ADM"
+            elif role == "Company":
+                role_code = "CHC-R-CMP"
+            else:
+                role_code = role
+
+        role_data = role_collection.find_one({
+            "role_code": role_code,
+            "is_active": True
+        })
+
+        role_name = role_code
+        permissions = []
+
+        if role_data:
+            role_code = role_data.get("role_code", role_code)
+            role_name = role_data.get("role_name", role_code)
+            permissions = role_data.get("permissions", {}).get("allowed", [])
         else:
-            return Response({"error": "Invalid password"}, status=status.HTTP_401_UNAUTHORIZED)
-    except Register.DoesNotExist:
-        return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            if role_code == "CHC-R-ADM":
+                role_name = "CHC Admin"
+                permissions = ["CHC-API-ADM", "CHC-API-CMP"]
+            elif role_code == "CHC-R-CMP":
+                role_name = "CHC Company"
+                permissions = ["CHC-API-CMP"]
+
+        allowed_data = []
+        if user_data.get("company_id"):
+            allowed_data.append(user_data.get("company_id"))
+        else:
+            allowed_data.append("SHB001")
+
+        payload = {
+            "aud": str(user_data["_id"]),
+            "name": user_data.get("name"),
+            "email": user_data.get("email") or "test@gmail.com",
+            "role_code": role_code,
+            "hospital_code": "CHC001",
+            "role_name": role_name,
+            "allowed-actions": permissions,
+            "allowed-data": allowed_data,
+            "company_id": user_data.get("company_id", "")
+        }
+
+        token = jwt_gen.createJwt(payload)
+
+        return Response({
+            "message": "Login successful",
+            "token": token,
+            "role": user_data.get("role"),
+            "role_code": role_code,
+            "role_name": role_name,
+            "permissions": permissions,
+            "id": str(user_data["_id"]),
+            "name": user_data.get("name"),
+            "company_id": user_data.get("company_id", "")
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        traceback.print_exc()
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        if 'client' in locals():
+            client.close()

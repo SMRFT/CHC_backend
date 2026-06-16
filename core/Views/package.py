@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from rest_framework import status
@@ -11,6 +11,7 @@ from ..serializers import PackageSerializer, CHCtestSerializer
 from ..models import Company, CHCtest
 from dotenv import load_dotenv
 load_dotenv()
+from pyauth.auth import HasRolePermission
 logger = logging.getLogger(__name__)
 
 def get_mongodb_collections():
@@ -86,6 +87,7 @@ import traceback
 
 @csrf_exempt
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_core_test(request):
 
     mongo = get_mongodb_collections()
@@ -140,6 +142,7 @@ def get_core_test(request):
 
 @csrf_exempt
 @api_view(['GET', 'POST', 'PATCH'])
+@permission_classes([HasRolePermission])
 def create_package(request):
     mongo = get_mongodb_collections()
     try:

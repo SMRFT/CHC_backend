@@ -3,9 +3,6 @@ from django.urls import path
 from core import views
 from .Views import sample,package,registration,security, company, billing, investigation_fields, report
 
-
-    
-
 urlpatterns = [
     path("get_approval_dashboard/", report.get_approval_dashboard, name="get_approval_dashboard"),
     path("get_approval_report/", report.get_approval_report, name="get_approval_report"),
@@ -28,6 +25,7 @@ urlpatterns = [
     
     # Batch URLs
     path('batch/', sample.batch_management, name='batch_management'),    
+    
     path("save_investigation/",registration.save_investigation, name="save_investigation"),
     path('approve_investigation/<str:barcode>/', registration.approve_investigation, name='approve_investigation'),
     path('get_investigations/', registration.get_investigations, name='get_investigations'),

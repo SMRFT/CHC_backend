@@ -1,10 +1,11 @@
 # views.py
 
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 from core.models import Company
 from core.serializers import CompanySerializer
+from pyauth.auth import HasRolePermission
 
 
 def _generate_next_company_id():
@@ -31,6 +32,7 @@ def get_next_company_id(request):
 
 
 @api_view(["GET", "POST"])
+@permission_classes([HasRolePermission])
 def company_list_create(request):
     if request.method == "GET":
         managed = request.GET.get("managed", "false").lower() == "true"

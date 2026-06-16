@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view, parser_classes, parser_classes
+from rest_framework.decorators import api_view, parser_classes, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
@@ -14,6 +14,7 @@ from datetime import datetime, time, timedelta
 from pymongo import MongoClient
 import certifi
 
+from pyauth.auth import HasRolePermission
 from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ from rest_framework.exceptions import ValidationError
 import json
 
 @api_view(['POST'])
+@permission_classes([HasRolePermission])
 def register_employee_with_billing(request):
     """
     Save EmployeeRegistration and Billing data simultaneously
@@ -402,8 +404,8 @@ def register_employee_with_billing(request):
     except Exception as e:
         return Response({"status": "error", "message": str(e)},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_next_offsite_barcode(request):
     """
     Find the next sequential 6-digit barcode for Offsite mode.
@@ -437,6 +439,7 @@ def get_next_offsite_barcode(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
+@permission_classes([HasRolePermission])
 def get_offsite_billings(request):
     """
     Fetch billing records where mode is 'Offsite', joined with employee details.
@@ -511,6 +514,7 @@ def get_offsite_billings(request):
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
+@permission_classes([HasRolePermission])
 def get_test_details(request):
     """
     Fetch test container by test_id from Diagnostics database.
@@ -573,6 +577,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 @api_view(["GET"])
+@permission_classes([HasRolePermission])
 def get_packages(request):
     try:
         client = MongoClient(MONGO_URI)
@@ -612,6 +617,7 @@ def get_packages(request):
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(["GET"])
+@permission_classes([HasRolePermission])
 def get_all_employees(request):
 
     client = MongoClient(MONGO_URI)
@@ -766,6 +772,7 @@ def get_all_employees(request):
 
 
 @api_view(["GET"])
+@permission_classes([HasRolePermission])
 def get_all_registered_employees(request):
     """
     Fetch all registered employees with optional filters for company and date range.
@@ -819,6 +826,7 @@ from ..serializers import InvestigationSerializer
 from pymongo import MongoClient
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_investigations(request):
     """
     Returns all Investigation records joined with employee_name from core_employeeregistration.
@@ -932,6 +940,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from ..models import Investigation
 @api_view(['PATCH'])
+@permission_classes([HasRolePermission])
 def approve_investigation(request, barcode):
     """
     Approve a single investigation by barcode.
@@ -1104,6 +1113,7 @@ def update_investigation_test(request):
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
+@permission_classes([HasRolePermission])
 def save_investigation(request):
     data = dict(request.data)
     # Convert single-value lists to plain values
@@ -1510,6 +1520,7 @@ from ..models import unregisteredEmployee
 from ..serializers import unregisteredEmployeeSerializer
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_unregistered_employees(request):
     """
     Fetch all unregistered employees or search by name/id.
@@ -1537,6 +1548,7 @@ def get_unregistered_employees(request):
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_unique_employee_types(request):
     try:
         # Combine unique employee types from triple sources: New model, unregistered, and final registrations
@@ -1569,6 +1581,7 @@ def create_employee_type(request):
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
+@permission_classes([HasRolePermission])
 def get_investigation_checklists(request):
     try:
         from_date = request.GET.get('from_date')
@@ -1659,6 +1672,7 @@ def get_investigation_checklists(request):
         return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
+@permission_classes([HasRolePermission])
 def update_investigation_checklist(request):
     try:
         data = request.data
