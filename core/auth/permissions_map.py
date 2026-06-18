@@ -8,6 +8,7 @@ PAGE_MAPPING = {
     r'^/_b_a_c_k_e_n_d/CHC/registration/?(\?.*)?$':'CHC-API-ADM',
     '/_b_a_c_k_e_n_d/CHC/get_employee_types/':'CHC-API-ADM',
     '/_b_a_c_k_e_n_d/CHC/get_next_offsite_barcode/':'CHC-API-ADM',
+    r'^/_b_a_c_k_e_n_d/CHC/companies/?(\?.*)?$':'CHC-API-ADM',
     '/_b_a_c_k_e_n_d/CHC/companies/':'CHC-API-ADM',
     r'^/_b_a_c_k_e_n_d/CHC/get_packages/?(\?.*)?$':'CHC-API-ADM',
     r'^/_b_a_c_k_e_n_d/CHC/get_test_details/?(\?.*)?$':'CHC-API-ADM',
