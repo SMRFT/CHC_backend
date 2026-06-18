@@ -57,10 +57,23 @@ class CHCRegistrationSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     barcode = serializers.SerializerMethodField()
     company_name = serializers.SerializerMethodField()
+    package_name = serializers.SerializerMethodField()
+    amount = serializers.SerializerMethodField()
+    payment_mode = serializers.SerializerMethodField()
 
     class Meta:
         model = CHCRegistration
         fields = '__all__'
+
+    def _get_billing(self, obj):
+        if not hasattr(obj, '_cached_billing'):
+            billing = None
+            if hasattr(obj, 'barcode') and obj.barcode:
+                billing = Billing.objects.filter(barcode=obj.barcode).values('package_id', 'netAmount', 'paymentMode', 'barcode').first()
+            if not billing and hasattr(obj, 'employee_id') and obj.employee_id:
+                billing = Billing.objects.filter(employee_id=obj.employee_id).order_by("-date").values('package_id', 'netAmount', 'paymentMode', 'barcode').first()
+            obj._cached_billing = billing
+        return obj._cached_billing
 
     def get_company_name(self, obj):
         try:
@@ -78,12 +91,42 @@ class CHCRegistrationSerializer(serializers.ModelSerializer):
             return obj.barcode
 
         # 2. Fallback to Billing lookup for historical records
-        if hasattr(obj, 'employee_id') and obj.employee_id:
-            billing = Billing.objects.filter(employee_id=obj.employee_id).order_by("-date").first()
-            if billing:
-                return billing.barcode
+        billing = self._get_billing(obj)
+        if billing:
+            return billing.get("barcode")
 
         return None
+
+    def get_package_name(self, obj):
+        try:
+            billing = self._get_billing(obj)
+            if billing and billing.get("package_id"):
+                package_id = billing.get("package_id")
+                package = Package.objects.filter(package_id=package_id).values("package_name").first()
+                if package:
+                    return package.get("package_name")
+                return package_id
+            return "-"
+        except Exception as e:
+            return "-"
+
+    def get_amount(self, obj):
+        try:
+            billing = self._get_billing(obj)
+            if billing:
+                return str(billing.get("netAmount"))
+            return "-"
+        except Exception as e:
+            return "-"
+
+    def get_payment_mode(self, obj):
+        try:
+            billing = self._get_billing(obj)
+            if billing:
+                return billing.get("paymentMode")
+            return "-"
+        except Exception as e:
+            return "-"
             
 from .models import Billing
 class BillingSerializer(serializers.ModelSerializer):
