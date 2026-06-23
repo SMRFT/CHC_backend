@@ -715,8 +715,8 @@ def get_all_employees(request):
                             "patient_history": inv_doc.get("patient_history", ""),
                             "test_results": inv_doc.get("test_results", []),
                             "dynamic_fields": inv_doc.get("dynamic_fields", []),
-                            "vitals": inv_doc.get("vitals", {}),
-                            "visual_acuity": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {})
+                            "visual_acuity": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {}),
+                            "CHCT001": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {})
                         }
 
                 # Use investigation dynamic fields if available, else billing defaults
@@ -738,6 +738,7 @@ def get_all_employees(request):
                     "test_results_saved": investigation_data.get("test_results", []),
                     "vitals": investigation_data.get("vitals", {}),
                     "visual_acuity": investigation_data.get("visual_acuity", {}),
+                    "CHCT001": investigation_data.get("visual_acuity", {}),
                     "extra_barcode": getattr(billing, 'extra_barcode', 3)
                 }
                 
@@ -917,9 +918,9 @@ def get_investigations(request):
                 'barcode': inv.get('barcode'),
                 'date': display_date,
                 'status': inv.get('status', 'pending'),
-                'patient_history': inv.get('patient_history', ''),
                 'test_results': test_results,
-                'visual_acuity': inv.get('visual_acuity') or inv.get('CHCT001', {}),
+                'visual_acuity': inv.get('CHCT001') or inv.get('visual_acuity', {}),
+                'CHCT001': inv.get('CHCT001') or inv.get('visual_acuity', {}),
                 'company_id': company_id,
                 'company_name': company_name,
                 'extra_barcode': inv.get('extra_barcode', 3),
@@ -1426,18 +1427,19 @@ def get_ophthalmology(request):
         results = []
 
         for inv in investigations_list:
-            # Check if has visual_acuity or OPHTHALMOLOGY test
             test_results = inv.get("test_results", [])
             if isinstance(test_results, str):
                 try: test_results = json.loads(test_results)
                 except: test_results = []
 
-            has_optho = any(
-                "OPHTHALMOLOGY" in (t.get("test_name") or "").upper() 
+            # Check if has CHCT001 or visual_acuity key directly, or if billed for CHCT001
+            chct_data = inv.get("CHCT001") or inv.get("visual_acuity")
+            has_optho = chct_data is not None or any(
+                str(t.get("test_id", "")).strip().upper() == "CHCT001"
                 for t in test_results
             )
             
-            if has_optho or inv.get("visual_acuity"):
+            if has_optho:
                 emp_id = inv.get("employee_id")
                 emp = employee_collection.find_one({"employee_id": emp_id})
                 emp_name = emp.get("employee_name", "-") if emp else "-"
@@ -1456,7 +1458,7 @@ def get_ophthalmology(request):
                     'age': age,
                     'date': display_date,
                     'status': inv.get('status', 'pending'),
-                    'visual_acuity': inv.get('visual_acuity', {}),
+                    'visual_acuity': chct_data or {},
                     'patient_history': inv.get('patient_history', '')
                 })
 
@@ -1501,7 +1503,8 @@ def get_investigation_by_barcode(request, barcode):
         record["department"] = emp.get("department", "-") if emp else "-"
         record["vitals"] = vitals
         record["test_results"] = test_results
-        record["visual_acuity"] = record.get("visual_acuity") or record.get("CHCT001", {})
+        record["visual_acuity"] = record.get("CHCT001") or record.get("visual_acuity", {})
+        record["CHCT001"] = record.get("CHCT001") or record.get("visual_acuity", {})
         record["_id"] = str(record["_id"])
         if record.get("date"):
             record["date"] = record["date"].isoformat()
