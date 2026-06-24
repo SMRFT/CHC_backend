@@ -6,7 +6,7 @@ from rest_framework import status
 from core.models import Company
 from core.serializers import CompanySerializer
 from pyauth.auth import HasRolePermission
-
+from datetime import datetime
 
 def _generate_next_company_id():
     """Auto-generate next company_id in format CHC001, CHC002, ..."""
@@ -45,13 +45,19 @@ def company_list_create(request):
 
     if request.method == "POST":
         data = request.data.copy()
+        employee_id = request.data.get("auth-user-id")
+        print("***********************************")
+        print("employee_id",employee_id)
+       
+        print("***********************************")
+
         # Auto-generate company_id if not provided
         if not data.get("company_id"):
             data["company_id"] = _generate_next_company_id()
 
         serializer = CompanySerializer(data=data)
         if serializer.is_valid():
-            serializer.save()
+            serializer.save(company_id=data["company_id"],created_by=employee_id,created_date=datetime.now(),lastmodified_by=employee_id,lastmodified_date=datetime.now())
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

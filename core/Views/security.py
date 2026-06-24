@@ -170,7 +170,7 @@ def login(request):
             allowed_data.append("SHB001")
 
         payload = {
-            "aud": str(user_data["_id"]),
+            "aud": str(user_data["employeeId"]),
             "name": user_data.get("name"),
             "email": user_data.get("email") or "test@gmail.com",
             "role_code": role_code,

@@ -91,6 +91,7 @@ def mark_as_paid(request):
     """
     try:
         data = request.data
+        employee_id = data.get("auth-user-id")
         barcode = data.get("barcode")
         billing_id = data.get("id")
         transaction_id = data.get("transaction_id", "")
@@ -133,7 +134,9 @@ def mark_as_paid(request):
             "data": {
                 "barcode": bill.barcode,
                 "paymentMode": bill.paymentMode,
-                "paid_at": bill.paid_at
+                "paid_at": bill.paid_at,
+                "lastmodified_by":employee_id,
+                "lastmodified_at":timezone.now()
             }
         }, status=status.HTTP_200_OK)
 
@@ -152,10 +155,12 @@ def payment_report(request):
             from_date = request.data.get('from_date')
             to_date = request.data.get('to_date')
             company_id = request.data.get('company_id')
+            employee_id = request.data.get("auth-user-id")
         else:
             from_date = request.query_params.get('from_date')
             to_date = request.query_params.get('to_date')
             company_id = request.query_params.get('company_id')
+            employee_id = request.query_params.get("auth-user-id")
 
         billings = Billing.objects.filter(paymentMode="Cash").order_by("-date")
 
@@ -185,7 +190,9 @@ def payment_report(request):
                 "company_id": bill.company_id,
                 "netAmount": safe_float(bill.netAmount),
                 "transaction_id": bill.transaction_id,
-                "mode": bill.mode
+                "mode": bill.mode,
+                "lastmodified_by":employee_id,
+                "lastmodified_at":timezone.now()
             })
             
         client.close()

@@ -328,7 +328,11 @@ def sample_management(request):
         company_id           = request.data.get("company_id")
         barcode              = request.data.get("barcode")
         incoming_testdetails = request.data.get("testdetails", [])
-        collected_by         = request.data.get("collected_by", "system")
+        collected_by         = request.data.get("auth-user-id", "system")
+        employee_id = request.data.get("auth-user-id", "system")
+        print("-------------------------------")
+        print("employee_id",employee_id)
+        print("-------------------------------")
 
         missing = []
         if not from_date_str: missing.append("from_date (or date)")
@@ -395,10 +399,10 @@ def sample_management(request):
                         if test_id in existing_map:
                             ex = existing_tests[existing_map[test_id]]
                             ex["samplestatus"]      = new_status
-                            ex["lastmodified_by"]   = collected_by
+                            ex["lastmodified_by"]   = employee_id
                             ex["lastmodified_time"] = current_time
                             if new_status == "Collected":
-                                ex["collected_by"]         = collected_by
+                                ex["collected_by"]         = employee_id
                                 ex["samplecollected_time"] = current_time
                                 if not ex.get("specimen_type"):
                                     ex["specimen_type"] = new_test.get("specimen_type", "Standard")
@@ -408,7 +412,7 @@ def sample_management(request):
                                 "test_id":               test_id,
                                 "samplestatus":          new_status,
                                 "samplecollected_time":  current_time if new_status == "Collected" else None,
-                                "collected_by":          collected_by if new_status == "Collected" else None,
+                                "collected_by":          employee_id ,
                                 "batch_number":          None,
                                 "sampletransferred_time": None,
                                 "transferred_by":        None,
@@ -416,7 +420,7 @@ def sample_management(request):
                                 "received_by":           None,
                                 "remarks":               None,
                                 "specimen_type":         new_test.get("specimen_type", "Standard"),
-                                "lastmodified_by":       collected_by,
+                                "lastmodified_by":       employee_id,
                                 "lastmodified_time":     current_time,
                             })
 
@@ -437,7 +441,7 @@ def sample_management(request):
                             "test_id":               test.get("test_id"),
                             "samplestatus":          s,
                             "samplecollected_time":  current_time if s == "Collected" else None,
-                            "collected_by":          collected_by if s == "Collected" else None,
+                            "collected_by":          employee_id if s == "Collected" else None,
                             "batch_number":          None,
                             "sampletransferred_time": None,
                             "transferred_by":        None,
@@ -445,7 +449,7 @@ def sample_management(request):
                             "received_by":           None,
                             "remarks":               None,
                             "specimen_type":         test.get("specimen_type", "Standard"),
-                            "lastmodified_by":       collected_by,
+                            "lastmodified_by":       employee_id,
                             "lastmodified_time":     current_time,
                         })
 
@@ -454,7 +458,7 @@ def sample_management(request):
                         package_id=billing.package_id,
                         company_id=company_id,
                         testdetails=formatted,
-                        created_by=collected_by,
+                        created_by=employee_id,
                     )
                     created = True
 
@@ -474,8 +478,9 @@ def sample_management(request):
         company_id     = request.data.get("company_id")
         barcode        = request.data.get("barcode")
         incoming_tests = request.data.get("testdetails", [])
-        transferred_by = request.data.get("transferred_by", "system")
+        transferred_by = request.data.get("auth-user-id", "system")
         transferred_to = request.data.get("transferred_to", "")   # ← NEW: destination lab
+        employee_id = request.data.get("auth-user-id")
 
         if not from_date_str or not company_id or not barcode:
             return Response(
@@ -970,6 +975,8 @@ def batch_management(request):
     # POST — create a new batch (unchanged from original)
     # ══════════════════════════════════════════════════════════════════════════
     elif request.method == "POST":
+        employee_id = request.data.get("auth-user-id","system")
+         
         try:
             mongo_url              = os.getenv("GLOBAL_DB_HOST")
             client                 = MongoClient(mongo_url)
@@ -1108,7 +1115,7 @@ def batch_management(request):
 
             data["shipment_from"] = incoming_company_name or "CHC"
             data["shipment_to"]   = "Shanmuga Reference Lab"
-
+            data["created_by"] = employee_id
             # 4. Save
             serializer = BatchSerializer(data=data)
             if not serializer.is_valid():
