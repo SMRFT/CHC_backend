@@ -116,7 +116,7 @@ class Batch(AuditModel):
         return self.batch_number
     
 
-class Investigation(models.Model):
+class Investigation(AuditModel):
     employee_id = models.CharField(max_length=50)
     vitals = models.JSONField()  # height, weight, bmi, bp, spo2
     # gender = models.CharField(max_length=10)
@@ -135,7 +135,7 @@ class Investigation(models.Model):
 
 
 
-class CHCtest(models.Model):
+class CHCtest(AuditModel):
     test_name = models.CharField(max_length=100)
     test_price = models.CharField(max_length=100)
     test_id = models.CharField(primary_key=True, max_length=20)
@@ -146,13 +146,13 @@ class CHCtest(models.Model):
     is_notes = models.BooleanField(default=False)
     is_report = models.BooleanField(default=False)
 
-class AddOnInvestigation(models.Model):
+class AddOnInvestigation(AuditModel):
     test_name = models.CharField(max_length=100)
     test_price = models.CharField(max_length=100)
     test_id = models.CharField(primary_key=True, max_length=20)
     is_active = models.BooleanField(default=True)
     
-class Company(models.Model):
+class Company(AuditModel):
     company_id = models.CharField(max_length=20, primary_key=True)
     company_name = models.CharField(max_length=100)
     address = models.CharField(max_length=200,blank=True, null=True)
@@ -188,20 +188,19 @@ class unregisteredEmployee(models.Model):
     def __str__(self):
         return f"{self.employee_id} ({self.employee_name})"
 
-class EmployeeType(models.Model):
+class EmployeeType(AuditModel):
     name = models.CharField(max_length=100, unique=True, primary_key=True)
-    created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
         return self.name
         
-class DynamicInvestigationFields(models.Model):
+class DynamicInvestigationFields(AuditModel):
     field_id = models.CharField(unique=True, primary_key=True, max_length=20)
     field_name = models.CharField(max_length=100)
     field_values = models.JSONField(default=list)
     is_active = models.BooleanField(default=True) 
     
-class InvestigationChecklist(models.Model):
+class InvestigationChecklist(AuditModel):
     employee_id = models.CharField(unique=True, primary_key=True, max_length=20)
     company_id = models.CharField(max_length=20)
     checklist = models.JSONField(default=list)

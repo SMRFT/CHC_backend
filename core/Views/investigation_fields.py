@@ -7,6 +7,8 @@ from ..serializers import DynamicInvestigationFieldsSerializer, AddOnInvestigati
 from pymongo import MongoClient
 import os
 import logging
+from datetime import datetime
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,13 @@ def dynamic_fields_list_create(request):
             mongo["client"].close()
     
     elif request.method == 'POST':
+        data = request.data.copy()
+        
+        # Audit fields
+        data["created_by"] = data.get("auth-user-id")
+        data["created_date"] = datetime.now()
+        data["last_modified_by"] = data.get("auth-user-id")
+        data["lastmodified_date"] = datetime.now()
         serializer = DynamicInvestigationFieldsSerializer(data=request.data)
         if serializer.is_valid():
             mongo = get_mongodb_collections()
@@ -57,7 +66,7 @@ def dynamic_fields_list_create(request):
                 # Bypassing ORM save to avoid djongo DatabaseError if any
                 mongo["dynamic_fields"].update_one(
                     {"field_id": save_data["field_id"]},
-                    {"$set": save_data},
+                    {"$set": save_data, "created_by" : data.get("auth-user-id"),"created_date" :datetime.now()},
                     upsert=True
                 )
                 return Response(serializer.data, status=status.HTTP_201_CREATED)

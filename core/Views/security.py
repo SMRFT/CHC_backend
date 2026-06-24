@@ -10,6 +10,7 @@ import certifi
 from ..models import Register
 import os
 #auth
+from django.utils import timezone
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -170,7 +171,7 @@ def login(request):
             allowed_data.append("SHB001")
 
         payload = {
-            "aud": str(user_data["_id"]),
+            "aud": str(user_data["employeeId"]),
             "name": user_data.get("name"),
             "email": user_data.get("email") or "test@gmail.com",
             "role_code": role_code,

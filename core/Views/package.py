@@ -67,8 +67,14 @@ def get_next_chc_test_id(request):
         mongo["client"].close()
 
 @api_view(['POST'])
+@permission_classes([HasRolePermission])
 def create_chc_test(request):
     data = request.data.copy()
+    data["created_by"] = data.get("auth-user-id")
+    print("employee ID",data.get("auth-user-id"))
+    data["created_date"] = timezone.now()
+    data["lastmodified_by"] = data.get("auth-user-id")
+    data["lastmodified_date"] = timezone.now()
     # Save test_id as it is (string with CHCT prefix)
     serializer = CHCtestSerializer(data=data)
     if serializer.is_valid():
@@ -151,6 +157,7 @@ def create_package(request):
         # ==========================
         if request.method == "POST":
             data = request.data
+            employee_id = data.get("auth-user-id")
 
             package_name = data.get("package_name")
             company_id = data.get("company_id")
@@ -218,7 +225,7 @@ def create_package(request):
                 "package_id": package_id,
                 "company_id": company_id,
                 "company_name": company.company_name,
-                "created_by": created_by,
+                "created_by": employee_id,
                 "created_date": timezone.now(),
                 "investigations": unique_tests,
                 "dynamic_fields": clean_list(data.get("dynamic_fields")),

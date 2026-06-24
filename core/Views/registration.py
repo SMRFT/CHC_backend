@@ -175,7 +175,8 @@ def register_employee_with_billing(request):
     
     try:
         data = request.data
-
+        print("*****************************")
+        print(data.get("auth-user-id"))
         registration_mode = data.get("registration_mode", "Onsite")
         barcode = data.get("barcode")
         employee_id = data.get("employee_id")
@@ -225,6 +226,7 @@ def register_employee_with_billing(request):
             "department": data.get("department") or None,
             "email": data.get("email") or None,
             "mobile": data.get("mobile"),
+            "created_by":data.get("auth-user-id"),
             "created_date": timezone.now(),
             "contractor": data.get("contractor") or None,
         }
@@ -316,6 +318,7 @@ def register_employee_with_billing(request):
 
         billing_payload = {
             "date": timezone.now(),
+            "created_by":data.get("auth-user-id"),
             "company_id": company_id,
             "employee_id": employee_id,
             "barcode": barcode,
@@ -386,7 +389,7 @@ def register_employee_with_billing(request):
                             "is_active": True,
                             "lastmodified_date": datetime.now()
                         },
-                        "$setOnInsert": {"created_date": datetime.now()}
+                        "$setOnInsert": {"created_date": datetime.now(),"created_by": employee_id}
                     },
                     upsert=True
                 )
@@ -940,6 +943,7 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
 from rest_framework import status
 from ..models import Investigation
+from datetime import datetime
 @api_view(['PATCH'])
 @permission_classes([HasRolePermission])
 def approve_investigation(request, barcode):
@@ -950,12 +954,13 @@ def approve_investigation(request, barcode):
     client = MongoClient(MONGO_URI)
     db = client[DB_NAME]
     investigation_collection = db["core_investigation"]
+    employee_id = request.data.get("auth-user-id", "system")
     
     try:
         # Use update_one to only modify the status
         result = investigation_collection.update_one(
             {"barcode": barcode, "status": "pending"},
-            {"$set": {"status": "approved"}}
+            {"$set": {"status": "approved","lastmodified_by": employee_id,"lastmodified_date": datetime.now(),"approved_by":employee_id}}
         )
         
         if result.matched_count == 0:
@@ -1008,7 +1013,9 @@ def delete_file_from_investigation(request):
     Expected payload: { "barcode": "...", "test_id": "...", "file_id": "..." }
     """
     try:
+
         data = request.data
+        employee_id = data.get("auth-user-id")
         barcode = data.get("barcode")
         test_id = str(data.get("test_id", "")).strip()
         file_id = data.get("file_id")
@@ -1024,7 +1031,10 @@ def delete_file_from_investigation(request):
         # 1. Update the investigation record: remove file_id from the files array of the specific test
         result = investigation_collection.update_one(
             {"barcode": barcode, "test_results.test_id": test_id},
-            {"$pull": {"test_results.$.files": file_id}}
+            {
+                "$set": {"lastmodified_by":employee_id},
+                "$pull": {"test_results.$.files": file_id}
+                }
         )
 
         if result.matched_count == 0:
@@ -1052,6 +1062,7 @@ def update_investigation_test(request):
     """
     try:
         data = request.data
+        employee_id = data.get("auth-user-id")
         barcode = data.get("barcode")
         test_id = data.get("test_id")
         report = data.get("report", "").strip()
@@ -1092,7 +1103,9 @@ def update_investigation_test(request):
         # Update the database
         investigation_collection.update_one(
             {"barcode": barcode},
-            {"$set": {"test_results": test_results}}
+            {
+                "$set": {"test_results": test_results,"lastmodified_by":employee_id}
+            }
         )
 
         client.close()
@@ -1117,6 +1130,7 @@ def update_investigation_test(request):
 @permission_classes([HasRolePermission])
 def save_investigation(request):
     data = dict(request.data)
+    user = data.get("auth-user-id")
     # Convert single-value lists to plain values
     for key, val in data.items():
         if isinstance(val, list) and len(val) == 1:
@@ -1297,7 +1311,10 @@ def save_investigation(request):
             "test_results": final_results,
             "dynamic_fields": dyn_fields_raw,
             "CHCT001": va_data,
-            # "company_id": data.get('company_id', 'CHC002')
+            "created_by":data.get("auth-user-id","system"),
+            "lastmodified_by":data.get("auth-user-id","system"),
+            "lastmodified_date":datetime.now(),
+            "company_id": data.get('company_id', 'CHC002')
         }
 
         # Use update_one with upsert=True to handle both create and update
@@ -1571,12 +1588,13 @@ def get_unique_employee_types(request):
 def create_employee_type(request):
     try:
         new_name = request.data.get('name', '').strip()
+        employee_id = request.data.get("auth-user-id")
         if not new_name:
             return Response({"status": "error", "message": "Type name is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         # Create new entry in formal model
         if not EmployeeType.objects.filter(name__iexact=new_name).exists():
-            EmployeeType.objects.create(name=new_name)
+            EmployeeType.objects.create(name=new_name,created_by=employee_id,created_date=datetime.now())
             return Response({"status": "success", "message": "Employee Type created"}, status=status.HTTP_201_CREATED)
         else:
             return Response({"status": "error", "message": "Employee Type already exists"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1679,6 +1697,7 @@ def get_investigation_checklists(request):
 def update_investigation_checklist(request):
     try:
         data = request.data
+        user = data.get("auth-user-id")
         employee_id = data.get("employee_id")
         checklist = data.get("checklist")
 
@@ -1704,7 +1723,7 @@ def update_investigation_checklist(request):
 
         result = cl_collection.update_one(
             {"employee_id": employee_id},
-            {"$set": {"checklist": checklist, "lastmodified_date": datetime.now()}}
+            {"$set": {"checklist": checklist, "lastmodified_date": datetime.now(), "lastmodified_by": user}}
         )
 
         client.close()
@@ -1726,6 +1745,7 @@ def bulk_upload_investigation_files(request):
     db = client["Corporatehealthcheckup"]
     fs = gridfs.GridFS(db)
     investigation_collection = db["core_investigation"]
+    user = request.data.get("auth-user-id")
     
     try:
         test_id = request.data.get('test_id')
@@ -1817,7 +1837,9 @@ def bulk_upload_investigation_files(request):
             "success_count": results["success"],
             "failed_count": results["failed"],
             "success_details": results["success_details"],
-            "errors": results["errors"]
+            "errors": results["errors"],
+            "created_by": user,
+            "created_date": datetime.datetime.now()
         }
         db["core_bulkuploadlog"].insert_one(log_entry)
 
