@@ -8,6 +8,7 @@ from pymongo import MongoClient
 import os
 import logging
 from datetime import datetime
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
