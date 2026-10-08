@@ -686,6 +686,13 @@ def get_all_employees(request):
     )
     mongo_inv_cache = {str(inv.get("barcode")): inv for inv in all_investigations_cursor if inv.get("barcode")}
 
+    # Pre-fetch package dynamic fields map
+    package_dynamic_fields_map = {
+        str(p.get("package_id")): p.get("dynamic_fields", [])
+        for p in db["core_package"].find({}, {"package_id": 1, "dynamic_fields": 1, "_id": 0})
+        if p.get("package_id")
+    }
+
     # Step 3: Assemble Response entirely in memory (O(1) lookups)
     employees_map = {}
     billings_list = list(billings)
@@ -703,8 +710,18 @@ def get_all_employees(request):
                 if not c_name or c_name == "-":
                     c_name = company_cache.get(c_id, "-")
 
-                # Fetch default dynamic fields from Billing record
-                dyn_fields = billing.dynamic_fields if hasattr(billing, 'dynamic_fields') else []
+                # Helper to clean and parse list
+                def parse_json_val(val):
+                    if isinstance(val, str):
+                        try: return json.loads(val)
+                        except: return []
+                    return val if isinstance(val, list) else []
+
+                # Fetch default dynamic fields from Billing record or Package defaults
+                pkg_id_str = str(getattr(billing, 'package_id', ''))
+                pkg_dyn = parse_json_val(package_dynamic_fields_map.get(pkg_id_str, []))
+                billing_dyn = parse_json_val(getattr(billing, 'dynamic_fields', []))
+                dyn_fields = billing_dyn if billing_dyn else pkg_dyn
 
                 # O(1) Memory Lookup for Investigation
                 investigation_data = {}
@@ -712,18 +729,31 @@ def get_all_employees(request):
                 
                 if barcode_str:
                     inv_doc = mongo_inv_cache.get(barcode_str)
-                    if inv_doc:
+                    # Verify investigation belongs to this employee
+                    if inv_doc and (str(inv_doc.get("employee_id", "")) == emp_id or not inv_doc.get("employee_id")):
                         investigation_data = {
                             "status": inv_doc.get("status", "pending"),
                             "patient_history": inv_doc.get("patient_history", ""),
                             "test_results": inv_doc.get("test_results", []),
-                            "dynamic_fields": inv_doc.get("dynamic_fields", []),
+                            "dynamic_fields": parse_json_val(inv_doc.get("dynamic_fields", [])),
                             "visual_acuity": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {}),
-                            "CHCT001": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {})
+                            "CHCT001": inv_doc.get("CHCT001", {}) or inv_doc.get("visual_acuity", {}),
+                            "vitals": inv_doc.get("vitals", {})
                         }
 
-                # Use investigation dynamic fields if available, else billing defaults
-                final_dyn_fields = investigation_data.get("dynamic_fields") or dyn_fields
+                # Patient's configured dynamic fields from Billing/Package are the base schema
+                inv_dyn = investigation_data.get("dynamic_fields", [])
+                if dyn_fields:
+                    final_dyn_fields = []
+                    for base_field in dyn_fields:
+                        field_copy = dict(base_field)
+                        fid = str(field_copy.get("field_id", ""))
+                        saved_f = next((sf for sf in inv_dyn if str(sf.get("field_id", "")) == fid), None)
+                        if saved_f and saved_f.get("field_values"):
+                            field_copy["field_values"] = saved_f.get("field_values")
+                        final_dyn_fields.append(field_copy)
+                else:
+                    final_dyn_fields = inv_dyn
                 
                 employees_map[emp_id] = {
                     "employee_name": employee.get("employee_name", ""),
@@ -738,6 +768,7 @@ def get_all_employees(request):
                     # Include existing investigation data
                     "status": investigation_data.get("status", "pending"),
                     "patient_history": investigation_data.get("patient_history", ""),
+                    "test_results": investigation_data.get("test_results", []),
                     "test_results_saved": investigation_data.get("test_results", []),
                     "vitals": investigation_data.get("vitals", {}),
                     "visual_acuity": investigation_data.get("visual_acuity", {}),
@@ -769,6 +800,16 @@ def get_all_employees(request):
                             "is_active": True
                         })
                     enriched_tests.append(test)
+
+                # If billing_testdetails was empty but saved test_results exist, fallback to saved tests
+                if not enriched_tests and investigation_data.get("test_results"):
+                    for test in investigation_data.get("test_results", []):
+                        test_id = str(test.get("test_id", "")).strip()
+                        test_copy = dict(test)
+                        test_info = test_dict.get(test_id)
+                        if test_info:
+                            test_copy.update(test_info)
+                        enriched_tests.append(test_copy)
                 
                 employees_map[emp_id]["billing_testdetails"] = enriched_tests
 
@@ -870,17 +911,19 @@ def get_investigations(request):
         # Fetch using PyMongo
         investigations_list = list(investigation_collection.find(query).sort("date", -1))
         
-        # Get billing dates for all barcodes
+        # Get billing dates and employee mapping for all barcodes
         barcodes = [inv.get("barcode") for inv in investigations_list if inv.get("barcode")]
         billings = Billing.objects.filter(barcode__in=barcodes)
         billing_date_map = {b.barcode: b.date for b in billings}
+        billing_emp_map = {b.barcode: b.employee_id for b in billings}
 
         data = []
         company_cache = {}
         for inv in investigations_list:
-            # Match full employee details from registration
-            emp_id = inv.get("employee_id")
-            emp = employee_collection.find_one({"employee_id": emp_id})
+            # Match full employee details from registration using current billing employee_id if available
+            barcode = inv.get("barcode")
+            emp_id = billing_emp_map.get(barcode) or inv.get("employee_id")
+            emp = employee_collection.find_one({"employee_id": str(emp_id)})
             
             emp_name = emp.get("employee_name", "-") if emp else "-"
             gender = emp.get("gender", "-") if emp else "-"
@@ -921,7 +964,10 @@ def get_investigations(request):
                 'barcode': inv.get('barcode'),
                 'date': display_date,
                 'status': inv.get('status', 'pending'),
+                'patient_history': inv.get('patient_history', ''),
                 'test_results': test_results,
+                'test_results_saved': test_results,
+                'dynamic_fields': inv.get('dynamic_fields', []),
                 'visual_acuity': inv.get('CHCT001') or inv.get('visual_acuity', {}),
                 'CHCT001': inv.get('CHCT001') or inv.get('visual_acuity', {}),
                 'company_id': company_id,
