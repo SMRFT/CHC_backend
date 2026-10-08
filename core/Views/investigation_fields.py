@@ -5,6 +5,7 @@ from rest_framework import status
 from ..models import DynamicInvestigationFields, AddOnInvestigation
 from ..serializers import DynamicInvestigationFieldsSerializer, AddOnInvestigationSerializer
 from pymongo import MongoClient
+import json
 import os
 import logging
 from datetime import datetime
@@ -63,10 +64,20 @@ def dynamic_fields_list_create(request):
                     try: save_data["field_values"] = json.loads(f_vals)
                     except: save_data["field_values"] = []
                 
+                save_data["last_modified_by"] = data.get("auth-user-id")
+                save_data["lastmodified_date"] = datetime.now()
+
                 # Bypassing ORM save to avoid djongo DatabaseError if any
                 mongo["dynamic_fields"].update_one(
                     {"field_id": save_data["field_id"]},
-                    {"$set": save_data, "created_by" : data.get("auth-user-id"),"created_date" :datetime.now()},
+                    {
+                        "$set": save_data,
+                        "$setOnInsert": {
+                            "created_by": data.get("auth-user-id"),
+                            "created_date": datetime.now(),
+                            "is_active": True
+                        }
+                    },
                     upsert=True
                 )
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -124,10 +135,19 @@ def addon_investigation_list_create(request):
             try:
                 save_data = serializer.validated_data.copy()
                 save_data.pop("is_active", None)
-                
+                save_data["last_modified_by"] = request.data.get("auth-user-id")
+                save_data["lastmodified_date"] = datetime.now()
+
                 mongo["addon_investigation"].update_one(
                     {"test_id": save_data["test_id"]},
-                    {"$set": save_data},
+                    {
+                        "$set": save_data,
+                        "$setOnInsert": {
+                            "created_by": request.data.get("auth-user-id"),
+                            "created_date": datetime.now(),
+                            "is_active": True
+                        }
+                    },
                     upsert=True
                 )
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
