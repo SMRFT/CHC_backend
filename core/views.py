@@ -65,9 +65,9 @@ def get_investigations(request):
             barcode_list = list(billings)
             
             if barcode_list:
-                # Set company_id in investigations if missing, just for consistency
+                # Set company_id in investigations if missing or undefined
                 investigation_collection.update_many(
-                    {"barcode": {"$in": barcode_list}, "company_id": {"$exists": False}},
+                    {"barcode": {"$in": barcode_list}, "$or": [{"company_id": {"$exists": False}}, {"company_id": {"$in": ["undefined", "null", ""]}}]},
                     {"$set": {"company_id": company_id}}
                 )
                 query["barcode"] = {"$in": barcode_list}

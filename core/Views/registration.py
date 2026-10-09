@@ -705,10 +705,12 @@ def get_all_employees(request):
             employee = mongo_emp_cache.get(emp_id)
 
             if employee:
-                c_id = str(employee.get("company_id", ""))
+                c_id = str(employee.get("company_id", "") or getattr(billing, 'company_id', "") or "")
+                if c_id.strip().lower() in ["undefined", "null"]:
+                    c_id = ""
                 c_name = employee.get("company_name", "")
                 if not c_name or c_name == "-":
-                    c_name = company_cache.get(c_id, "-")
+                    c_name = company_cache.get(c_id, "-") if c_id else "-"
 
                 # Helper to clean and parse list
                 def parse_json_val(val):
@@ -761,6 +763,7 @@ def get_all_employees(request):
                     "gender": employee.get("gender", ""),
                     "employee_id": employee.get("employee_id", ""),
                     "barcode": barcode_str,
+                    "company_id": c_id,
                     "company_name": c_name,
                     "created_date": employee.get("created_date", ""),
                     "billing_testdetails": [],
@@ -929,15 +932,26 @@ def get_investigations(request):
             gender = emp.get("gender", "-") if emp else "-"
             age = emp.get("age", "-") if emp else "-"
             department = emp.get("department", "-") if emp else "-"
-            company_id = inv.get("company_id") or (emp.get("company_id") if emp else "CHC002")
+            
+            # Resolve company_id without manual fallback to "CHC002"
+            raw_cid = inv.get("company_id")
+            if raw_cid and str(raw_cid).strip().lower() not in ["undefined", "null", ""]:
+                company_id = str(raw_cid).strip()
+            elif emp and emp.get("company_id") and str(emp.get("company_id")).strip().lower() not in ["undefined", "null", ""]:
+                company_id = str(emp.get("company_id")).strip()
+            else:
+                billing_obj = billings.filter(barcode=barcode).first() if hasattr(billings, 'filter') else None
+                company_id = str(getattr(billing_obj, 'company_id', '') or '') if billing_obj else ''
+                if company_id in ["undefined", "null"]:
+                    company_id = ""
             
             # Get company name
             company_name = emp.get("company_name") if emp else None
             if not company_name or company_name == "-":
-                if company_id not in company_cache:
+                if company_id and company_id not in company_cache:
                     comp_obj = Company.objects.filter(company_id=company_id).first()
                     company_cache[company_id] = comp_obj.company_name if comp_obj else "-"
-                company_name = company_cache[company_id]
+                company_name = company_cache.get(company_id, "-") if company_id else "-"
 
             # Robust JSON handling
             vitals = inv.get('vitals', {})
@@ -1343,8 +1357,22 @@ def save_investigation(request):
             try: dyn_fields_raw = json.loads(dyn_fields_raw)
             except: dyn_fields_raw = []
         if not isinstance(dyn_fields_raw, list): dyn_fields_raw = []
-        for df in dyn_fields_raw:
-            if isinstance(df, dict): df.pop("is_active", None)
+        # Resolve company_id dynamically if missing or undefined, without hardcoded fallback
+        cid = data.get('company_id')
+        if not cid or str(cid).strip().lower() in ['undefined', 'null', '']:
+            emp = employee_collection.find_one({"employee_id": str(data.get('employee_id'))})
+            if emp and emp.get("company_id") and str(emp.get("company_id")).strip().lower() not in ['undefined', 'null', '']:
+                cid = str(emp.get("company_id")).strip()
+            elif barcode:
+                billing = Billing.objects.filter(barcode=barcode).first()
+                if billing and getattr(billing, 'company_id', None) and str(billing.company_id).strip().lower() not in ['undefined', 'null', '']:
+                    cid = str(billing.company_id).strip()
+                else:
+                    cid = ""
+            else:
+                cid = ""
+        else:
+            cid = str(cid).strip()
 
         # Prepare the update document
         update_doc = {
@@ -1357,10 +1385,10 @@ def save_investigation(request):
             "test_results": final_results,
             "dynamic_fields": dyn_fields_raw,
             "CHCT001": va_data,
-            "created_by":data.get("auth-user-id","system"),
-            "lastmodified_by":data.get("auth-user-id","system"),
-            "lastmodified_date":datetime.now(),
-            "company_id": data.get('company_id', 'CHC002')
+            "created_by": data.get("auth-user-id", "system"),
+            "lastmodified_by": data.get("auth-user-id", "system"),
+            "lastmodified_date": datetime.now(),
+            "company_id": cid
         }
 
         # Use update_one with upsert=True to handle both create and update
@@ -1432,7 +1460,7 @@ def sync_investigations_from_billing(request):
                     "barcode": billing.barcode,
                     "gender": emp.get("gender", "Unknown"),
                     "age": emp.get("age", 0),
-                    "company_id": billing.company_id or emp.get("company_id", "CHC002"),
+                    "company_id": billing.company_id or emp.get("company_id", ""),
                     "status": "pending",
                     "date": datetime.now(),
                     "vitals": {},
@@ -1683,13 +1711,15 @@ def get_investigation_checklists(request):
             emp = emp_collection.find_one({"employee_id": cl.get("employee_id")})
             
             # Resolve company details
-            company_id = cl.get("company_id") or (emp.get("company_id") if emp else "CHC002")
+            company_id = cl.get("company_id") or (emp.get("company_id") if emp else "")
+            if company_id in ["undefined", "null"]:
+                company_id = ""
             company_name = emp.get("company_name") if emp else None
             if not company_name or company_name == "-":
-                if company_id not in company_cache:
+                if company_id and company_id not in company_cache:
                     comp_obj = Company.objects.filter(company_id=company_id).first()
                     company_cache[company_id] = comp_obj.company_name if comp_obj else "-"
-                company_name = company_cache[company_id]
+                company_name = company_cache.get(company_id, "-") if company_id else "-"
 
             # Robust checklist parsing
             checklist_data = cl.get("checklist", [])
